@@ -1,0 +1,17 @@
+# Byte-compiled / build output
+__pycache__/
+*.py[cod]
+*.so
+
+# Packaging and install artefacts
+*.egg-info/
+build/
+dist/
+.venv/
+.venv*/
+
+# Caches
+.ruff_cache/
+.ty_cache/
+.mypy_cache/
+.pytest_cache/

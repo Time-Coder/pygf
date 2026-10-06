@@ -1,0 +1,339 @@
+import ctypes
+from typing import TYPE_CHECKING, Union
+
+from .genVec2 import genVec2
+from .half import half_fields, half_properties
+
+if TYPE_CHECKING:
+
+    from .half3 import half3
+    from .half4 import half4
+
+# --- BEGIN generated swizzle imports ---
+# --- END generated swizzle imports ---
+
+class half2(genVec2):
+
+    _fields_ = half_fields(2)
+
+    x, y = half_properties("xy")
+
+    @property
+    def dtype(self)->type:
+        # The storage type, not a Python float type: genType promotes on dtype,
+        # and this is what tells half2 from float2.
+        return ctypes.c_uint16
+
+    if TYPE_CHECKING:
+
+        # Every swizzle genVec can build, as declarations only. This block never
+        # executes, so the runtime path stays genVec.__getattr__.
+        # Regenerate with tools/sync_swizzle_blocks.py.
+        # --- BEGIN generated swizzles ---
+
+        @property
+        def x(self)->float: ...
+
+        @x.setter
+        def x(self, value:Union[bool, int, float])->None: ...
+
+        @property
+        def y(self)->float: ...
+
+        @y.setter
+        def y(self, value:Union[bool, int, float])->None: ...
+
+        @property
+        def xx(self)->"half2": ...
+
+        @property
+        def xy(self)->"half2": ...
+
+        @xy.setter
+        def xy(self, value:Union[bool, int, float, genVec2])->None: ...
+
+        @property
+        def yx(self)->"half2": ...
+
+        @yx.setter
+        def yx(self, value:Union[bool, int, float, genVec2])->None: ...
+
+        @property
+        def yy(self)->"half2": ...
+
+        @property
+        def xxx(self)->half3: ...
+
+        @property
+        def xxy(self)->half3: ...
+
+        @property
+        def xyx(self)->half3: ...
+
+        @property
+        def xyy(self)->half3: ...
+
+        @property
+        def yxx(self)->half3: ...
+
+        @property
+        def yxy(self)->half3: ...
+
+        @property
+        def yyx(self)->half3: ...
+
+        @property
+        def yyy(self)->half3: ...
+
+        @property
+        def xxxx(self)->half4: ...
+
+        @property
+        def xxxy(self)->half4: ...
+
+        @property
+        def xxyx(self)->half4: ...
+
+        @property
+        def xxyy(self)->half4: ...
+
+        @property
+        def xyxx(self)->half4: ...
+
+        @property
+        def xyxy(self)->half4: ...
+
+        @property
+        def xyyx(self)->half4: ...
+
+        @property
+        def xyyy(self)->half4: ...
+
+        @property
+        def yxxx(self)->half4: ...
+
+        @property
+        def yxxy(self)->half4: ...
+
+        @property
+        def yxyx(self)->half4: ...
+
+        @property
+        def yxyy(self)->half4: ...
+
+        @property
+        def yyxx(self)->half4: ...
+
+        @property
+        def yyxy(self)->half4: ...
+
+        @property
+        def yyyx(self)->half4: ...
+
+        @property
+        def yyyy(self)->half4: ...
+
+        @property
+        def r(self)->float: ...
+
+        @r.setter
+        def r(self, value:Union[bool, int, float])->None: ...
+
+        @property
+        def g(self)->float: ...
+
+        @g.setter
+        def g(self, value:Union[bool, int, float])->None: ...
+
+        @property
+        def rr(self)->"half2": ...
+
+        @property
+        def rg(self)->"half2": ...
+
+        @rg.setter
+        def rg(self, value:Union[bool, int, float, genVec2])->None: ...
+
+        @property
+        def gr(self)->"half2": ...
+
+        @gr.setter
+        def gr(self, value:Union[bool, int, float, genVec2])->None: ...
+
+        @property
+        def gg(self)->"half2": ...
+
+        @property
+        def rrr(self)->half3: ...
+
+        @property
+        def rrg(self)->half3: ...
+
+        @property
+        def rgr(self)->half3: ...
+
+        @property
+        def rgg(self)->half3: ...
+
+        @property
+        def grr(self)->half3: ...
+
+        @property
+        def grg(self)->half3: ...
+
+        @property
+        def ggr(self)->half3: ...
+
+        @property
+        def ggg(self)->half3: ...
+
+        @property
+        def rrrr(self)->half4: ...
+
+        @property
+        def rrrg(self)->half4: ...
+
+        @property
+        def rrgr(self)->half4: ...
+
+        @property
+        def rrgg(self)->half4: ...
+
+        @property
+        def rgrr(self)->half4: ...
+
+        @property
+        def rgrg(self)->half4: ...
+
+        @property
+        def rggr(self)->half4: ...
+
+        @property
+        def rggg(self)->half4: ...
+
+        @property
+        def grrr(self)->half4: ...
+
+        @property
+        def grrg(self)->half4: ...
+
+        @property
+        def grgr(self)->half4: ...
+
+        @property
+        def grgg(self)->half4: ...
+
+        @property
+        def ggrr(self)->half4: ...
+
+        @property
+        def ggrg(self)->half4: ...
+
+        @property
+        def gggr(self)->half4: ...
+
+        @property
+        def gggg(self)->half4: ...
+
+        @property
+        def s(self)->float: ...
+
+        @s.setter
+        def s(self, value:Union[bool, int, float])->None: ...
+
+        @property
+        def t(self)->float: ...
+
+        @t.setter
+        def t(self, value:Union[bool, int, float])->None: ...
+
+        @property
+        def ss(self)->"half2": ...
+
+        @property
+        def st(self)->"half2": ...
+
+        @st.setter
+        def st(self, value:Union[bool, int, float, genVec2])->None: ...
+
+        @property
+        def ts(self)->"half2": ...
+
+        @ts.setter
+        def ts(self, value:Union[bool, int, float, genVec2])->None: ...
+
+        @property
+        def tt(self)->"half2": ...
+
+        @property
+        def sss(self)->half3: ...
+
+        @property
+        def sst(self)->half3: ...
+
+        @property
+        def sts(self)->half3: ...
+
+        @property
+        def stt(self)->half3: ...
+
+        @property
+        def tss(self)->half3: ...
+
+        @property
+        def tst(self)->half3: ...
+
+        @property
+        def tts(self)->half3: ...
+
+        @property
+        def ttt(self)->half3: ...
+
+        @property
+        def ssss(self)->half4: ...
+
+        @property
+        def ssst(self)->half4: ...
+
+        @property
+        def ssts(self)->half4: ...
+
+        @property
+        def sstt(self)->half4: ...
+
+        @property
+        def stss(self)->half4: ...
+
+        @property
+        def stst(self)->half4: ...
+
+        @property
+        def stts(self)->half4: ...
+
+        @property
+        def sttt(self)->half4: ...
+
+        @property
+        def tsss(self)->half4: ...
+
+        @property
+        def tsst(self)->half4: ...
+
+        @property
+        def tsts(self)->half4: ...
+
+        @property
+        def tstt(self)->half4: ...
+
+        @property
+        def ttss(self)->half4: ...
+
+        @property
+        def ttst(self)->half4: ...
+
+        @property
+        def ttts(self)->half4: ...
+
+        @property
+        def tttt(self)->half4: ...
+        # --- END generated swizzles ---
