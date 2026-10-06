@@ -13,10 +13,16 @@ dependencies = [
     "numpy"
 ]
 
+# `dev` is what static_check.py needs. `publish` is what `python publish.py
+# build` needs -- twine and build are not needed to work on the package.
 [project.optional-dependencies]
 dev = [
     "ruff",
     "ty"
+]
+publish = [
+    "build",
+    "twine"
 ]
 
 [tool.setuptools.packages.find]
