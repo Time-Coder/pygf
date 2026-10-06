@@ -60,6 +60,16 @@ container as its components: `np.array(matrix3d())` gives a `(3, 3)` array
 rather than ctypes' flat storage. Arguments it does not recognise are passed
 straight through.
 
+## Layout
+
+```
+pygf/          the package
+tests/         test_pygf.py -- stdlib plus pygf, nothing else
+tools/         sync_swizzle_blocks.py -- the only writer of the swizzle blocks
+static_check.py
+publish.py
+```
+
 ## Development
 
 ```
@@ -79,3 +89,15 @@ python tools/sync_swizzle_blocks.py
 ```
 
 It is idempotent, and it is the only thing that writes those blocks.
+
+## Publishing
+
+```
+python -m pip install -e ".[publish]"
+python publish.py build
+python publish.py
+```
+
+## License
+
+MIT
