@@ -7,8 +7,41 @@ name = "pygf"
 version = "0.1.0"
 description = "Graphics math types for Python: vectors, matrices and quaternions on ctypes"
 readme = "README.md"
-license = {text = "MIT"}
+# PEP 639 SPDX string rather than the deprecated `{text = "MIT"}` table, so the
+# built metadata carries `License-Expression` and twine stops warning.
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
+authors = [
+    {name = "王炳辉", email = "binghui.wang@foxmail.com"}
+]
+keywords = [
+    "graphics",
+    "math",
+    "linear-algebra",
+    "vector",
+    "matrix",
+    "quaternion",
+    "ctypes",
+    "gltf",
+    "usd"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    # No `License ::` classifier: PEP 639 supersedes it with the `license`
+    # expression above, and setuptools rejects the two together.
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Topic :: Multimedia :: Graphics",
+    "Topic :: Scientific/Engineering :: Mathematics",
+    "Typing :: Typed",
+]
 dependencies = [
     "numpy"
 ]
@@ -24,6 +57,10 @@ publish = [
     "build",
     "twine"
 ]
+
+[project.urls]
+Homepage = "https://github.com/Time-Coder/pygf"
+Source = "https://github.com/Time-Coder/pygf"
 
 [tool.setuptools.packages.find]
 where = ["."]
