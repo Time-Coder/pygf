@@ -40,6 +40,7 @@ from .funcs import (
     asin,
     asinh,
     atan,
+    atan2,
     atanh,
     ceil,
     clamp,
@@ -47,9 +48,12 @@ from .funcs import (
     cos,
     cosh,
     cross,
+    degrees,
     determinant,
     distance,
     dot,
+    dFdx,
+    dFdy,
     equal,
     exp,
     exp2,
@@ -57,6 +61,7 @@ from .funcs import (
     faceforward,
     floor,
     fract,
+    fwidth,
     greaterThan,
     greaterThanEqual,
     inverse,
@@ -67,9 +72,13 @@ from .funcs import (
     log,
     log2,
     log10,
+    luminance,
+    magnitude,
     matrixCompMult,
     max,
+    maxcomponent,
     min,
+    mincomponent,
     mix,
     mod,
     normalize,
@@ -77,10 +86,12 @@ from .funcs import (
     notEqual,
     outerProduct,
     pow,
+    radians,
     reflect,
     refract,
     round,
     roundEven,
+    saturate,
     sign,
     sin,
     sinh,
@@ -91,6 +102,7 @@ from .funcs import (
     tan,
     tanh,
     trace,
+    transformvector,
     transpose,
     trunc,
 )
@@ -146,9 +158,11 @@ __all__ = [
     "half2", "half3", "half4",
     "float2", "float3", "float4",
     "double2", "double3", "double4",
+    "vec2", "vec3", "vec4",
     "matrix2b", "matrix3b", "matrix4b",
     "matrix2f", "matrix3f", "matrix4f",
     "matrix2d", "matrix3d", "matrix4d",
+    "matrix33", "matrix44",
     "quatb", "quatf", "quatd", "quath",
     "color3h", "color3f", "color3d",
     "color4h", "color4f", "color4d",
@@ -165,9 +179,20 @@ __all__ = [
     "sin", "cos", "tan", "asin", "acos", "atan",
     "sinh", "cosh", "tanh", "asinh", "acosh", "atanh",
     "length", "normalize", "distance", "dot", "cross", "faceforward", "reflect", "refract",
+    "magnitude", "atan2", "saturate", "degrees", "radians",
+    "mincomponent", "maxcomponent", "luminance", "transformvector",
     "transpose", "determinant", "inverse", "trace", "conjugate",
     "matrixCompMult", "outerProduct", "lessThan", "lessThanEqual",
-    "greaterThan", "greaterThanEqual", "equal", "notEqual", "any", "all", "not_", "sizeof"
+    "greaterThan", "greaterThanEqual", "equal", "notEqual", "any", "all", "not_", "sizeof",
+    "dFdx", "dFdy", "fwidth",
 ]
+
+# GLSL spelling aliases. These are the same classes under the name a shader
+# author expects, so a MaterialX transpiler can map a name without a rename.
+vec2 = float2
+vec3 = float3
+vec4 = float4
+matrix33 = matrix3f
+matrix44 = matrix4f
 
 patch_nparray()

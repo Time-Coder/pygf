@@ -73,15 +73,18 @@ Run with:
 """
 
 import ctypes
+import math
 import sys
 from pathlib import Path
-from typing import Any, Tuple
+from typing import Any, Tuple, cast
 
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import pygf
 from pygf import funcs
+from pygf.alias import color3f
 from pygf.double3 import double3
 from pygf.float2 import float2
 from pygf.float3 import float3
@@ -94,6 +97,7 @@ from pygf.half3 import half3
 from pygf.half4 import half4
 from pygf.int3 import int3
 from pygf.matrix3d import matrix3d
+from pygf.matrix3f import matrix3f
 from pygf.matrix4d import matrix4d
 from pygf.quatd import quatd
 from pygf.uint3 import uint3
@@ -468,6 +472,96 @@ check("np.array of a list of vectors", np.array([double3(1, 2, 3)]).shape, (1, 3
 # A half field is a uint16 bit pattern, so the patch has to decode it rather
 # than hand numpy the raw integer.
 check("np.array of a half vector", np.array(half3(1.0, 2.0, 3.0)), [1.0, 2.0, 3.0])
+
+# --- GLSL / MaterialX semantics ----------------------------------------------
+# A MaterialX transpiler maps these names straight onto nodes, so a divergence
+# from GLSL becomes a wrong shader rather than a wrong number.
+print()
+print("--- GLSL semantics ---")
+# sign used math.copysign, so sign(0.0) was 1 and sign(-0.0) was -1. GLSL is
+# three-valued and returns 0 for both zeros.
+check("sign(0.0)", cast(float, funcs.sign(0.0)), 0.0)
+check("sign(-0.0)", cast(float, funcs.sign(-0.0)), 0.0)
+check("sign(-2.5)", cast(float, funcs.sign(-2.5)), -1.0)
+check("sign(3.0)", cast(float, funcs.sign(3.0)), 1.0)
+
+# math.trunc returns an int. GLSL trunc is a float operation, and the container
+# path assigns through a ctypes float field.
+check("trunc returns float", type(cast(float, funcs.trunc(1.5))).__name__, "float")
+check("trunc(1.5)", cast(float, funcs.trunc(1.5)), 1.0)
+check("trunc(-1.5)", cast(float, funcs.trunc(-1.5)), -1.0)
+
+# Python's ** returns a complex number for a negative base with a fractional
+# exponent, which no container slot can hold.
+# The helpers take a container or a scalar and are annotated as the union, so
+# these results are narrowed with cast() rather than with a runtime guard: the
+# inputs here are scalars, so the result is a scalar.
+_nan_pow = cast(float, funcs.pow(-8.0, 1 / 3))
+check("pow negative base fractional exponent is nan", math.isnan(_nan_pow), True)
+check("pow positive base fractional exponent",
+      round(cast(float, funcs.pow(8.0, 1 / 3)), 6), 2.0)
+check("pow negative base integer exponent", cast(float, funcs.pow(-2.0, 3.0)), -8.0)
+
+# smoothstep bound edge0 as a float outside the element-wise descent, so a
+# vector edge0 silently produced zeros instead of interpolating.
+check("smoothstep scalar", cast(float, funcs.smoothstep(0.0, 1.0, 0.5)), 0.5)
+check("smoothstep vector edges",
+      list(cast(float3, funcs.smoothstep(float3(0, 0, 0), float3(1, 1, 1),
+                                         float3(0, 0.5, 1)))),
+      [0.0, 0.5, 1.0])
+check("smoothstep broadcast scalar edges",
+      list(cast(float3, funcs.smoothstep(0.0, 1.0, float3(0, 0.5, 1)))),
+      [0.0, 0.5, 1.0])
+
+# Python's % and GLSL's mod(x,y) = x - y*floor(x/y) are the same function, so
+# mod needs no change -- verified rather than assumed, because getting this wrong
+# would be a breaking change for no reason.
+for px, py in ((-8.0, 3.0), (8.0, -3.0), (5.5, 2.0), (-5.5, 2.0)):
+    check(f"mod({px}, {py}) matches GLSL",
+          cast(float, funcs.mod(px, py)), px - py * math.floor(px / py))
+
+# --- functions added for the MaterialX mapping --------------------------------
+print()
+print("--- MaterialX-facing helpers ---")
+check("magnitude is length", cast(float, funcs.magnitude(float3(3, 4, 0))), 5.0)
+check("atan2(1,1)", round(cast(float, funcs.atan2(1.0, 1.0)), 6), 0.785398)
+check("atan2(-1,-1)", round(cast(float, funcs.atan2(-1.0, -1.0)), 6), -2.356194)
+check("saturate high", cast(float, funcs.saturate(1.5)), 1.0)
+check("saturate low", cast(float, funcs.saturate(-0.5)), 0.0)
+check("saturate pass", cast(float, funcs.saturate(0.25)), 0.25)
+check("degrees(pi)", round(cast(float, funcs.degrees(math.pi)), 6), 180.0)
+check("radians(180)", round(cast(float, funcs.radians(180.0)), 6), 3.141593)
+# mincomponent/maxcomponent reduce to float in MaterialX, not to the input type.
+check("mincomponent", funcs.mincomponent(float3(3, 1, 2)), 1.0)
+check("maxcomponent", funcs.maxcomponent(float3(3, 1, 2)), 3.0)
+check("luminance of white", round(cast(float, funcs.luminance(color3f(1, 1, 1))), 6), 1.0)
+check("luminance of red", round(cast(float, funcs.luminance(color3f(1, 0, 0))), 6), 0.272229)
+check("vec3 alias is float3", pygf.vec3 is float3, True)
+check("matrix33 alias is matrix3f", pygf.matrix33 is matrix3f, True)
+
+_m = matrix3f()
+for _r in range(3):
+    for _c in range(3):
+        _m.put(_r, _c, 1.0 if _r == _c else 0.0)
+check("transformvector identity",
+      list(cast(float3, funcs.transformvector(float3(1, 2, 3), _m))),
+      [1.0, 2.0, 3.0])
+
+_s = matrix3f()
+for _r, _row in enumerate([[2.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]):
+    for _c, _value in enumerate(_row):
+        _s.put(_r, _c, _value)
+check("transformvector scales",
+      list(cast(float3, funcs.transformvector(float3(1, 2, 3), _s))),
+      [2.0, 2.0, 3.0])
+
+# These three are declaration-only: they need a renderer to mean anything.
+for _fn in (funcs.dFdx, funcs.dFdy, funcs.fwidth):
+    try:
+        _fn(1.0)
+        check(f"{_fn.__name__} is declaration-only", "returned", "NotImplementedError")
+    except NotImplementedError:
+        check(f"{_fn.__name__} is declaration-only", "NotImplementedError", "NotImplementedError")
 
 print()
 if FAILURES:

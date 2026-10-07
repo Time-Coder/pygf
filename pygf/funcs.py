@@ -46,7 +46,9 @@ def abs(x:Union[genType, Number])->Union[genType, float]:
     return _single_op(x, builtins.abs, "abs")
 
 def sign(x:Union[genType, Number])->Union[genType, float]:
-    return _single_op(x, lambda x: math.copysign(1, x), "sign")
+    # GLSL: sign(x) is -1, 0 or 1. math.copysign gave 1 at +0.0 and -1 at -0.0,
+    # where GLSL returns 0 for both.
+    return _single_op(x, lambda x: 0.0 if x == 0 else math.copysign(1.0, x), "sign")
 
 def floor(x:Union[genType, Number])->Union[genType, float]:
     return _single_op(x, math.floor, "floor")
@@ -55,7 +57,9 @@ def ceil(x:Union[genType, Number])->Union[genType, float]:
     return _single_op(x, math.ceil, "ceil")
 
 def trunc(x:Union[genType, Number])->Union[genType, float]:
-    return _single_op(x, math.trunc, "trunc")
+    # math.trunc returns an int, but GLSL trunc is a float operation and the
+    # container path assigns through a ctypes float field. Wrap it.
+    return _single_op(x, lambda x: float(math.trunc(x)), "trunc")
 
 def round(x:Union[genType, Number])->Union[genType, float]:
     return _single_op(x, lambda x: math.floor(x + 0.5) if x >= 0 else math.ceil(x - 0.5), "round")
@@ -77,7 +81,13 @@ def fract(x:Union[genType, Number])->Union[genType, float]:
     # which is not a fractional part of anything.
     return _single_op(x, lambda x: x - math.floor(x), "fract")
 
-def mod(x:genType, y:genType)->genType:
+def mod(x:Union[genType, float], y:Union[genType, float])->Union[genType, float]:
+    # GLSL: mod(x, y) = x - y * floor(x / y), which returns a result carrying
+    # the sign of the divisor. Python's `%` is defined the same way for finite
+    # floats, so the operator is already correct here.
+    #
+    # The operands are float rather than Number: Decimal is part of Number but
+    # implements no `%`, so the wider annotation was the wrong one.
     return x % y
 
 def _bin_op(x:Any, y:Any, op:Callable[[Any,Any], Any], op_name:str)->Any:
@@ -161,11 +171,63 @@ def _smoothstep(edge0: float, edge1: float, x: float) -> float:
     t = (x - edge0) / (edge1 - edge0)
     return t * t * (3.0 - 2.0 * t)
 
-def smoothstep(edge0: genType, edge1: genType, x: genType)->genType:
-    if (not (is_number(edge0) and is_number(edge1))) and not edge0._is_homo(edge1):
-        raise ValueError('edge0 and edge1 must be same type')
+def _first_container(*args:Any)->Any:
+    for a in args:
+        if isinstance(a, genType):
+            return a
+    return None
 
-    return _bin_op(edge1, x, lambda edge1, x: _smoothstep(cast(float, edge0), cast(float, edge1), cast(float, x)), "smoothstep")
+def _tri_op(a:Any, b:Any, c:Any, op:Callable[[Any,Any,Any], Any], op_name:str)->Any:
+    """Apply `op` element-wise to three operands, descending through rows.
+
+    A matrix slot is a row, so a second level is reached whenever any of the
+    three is itself a genType.
+    """
+    container = _first_container(a, b, c)
+    if container is None:
+        if is_number(a) and is_number(b) and is_number(c):
+            return op(a, b, c)
+        raise TypeError(f"{op_name} not supported for type '{a.__class__.__name__}'")
+
+    for other in (b, c):
+        if isinstance(other, genType) and not container._is_homo(other):
+            raise TypeError(f"not defined {op_name} between '{container.__class__.__name__}' and '{other.__class__.__name__}'")
+
+    result:genType = container.__class__()
+    for i in range(result._slot_count()):
+        sa = a[i] if isinstance(a, genType) else a
+        sb = b[i] if isinstance(b, genType) else b
+        sc = c[i] if isinstance(c, genType) else c
+        inner = _first_container(sa, sb, sc)
+        if inner is not None:
+            sub = inner.__class__()
+            _tri_fill(sub, sa, sb, sc, op)
+            _assign_slot(result, i, sub)
+        else:
+            result[i] = op(sa, sb, sc)
+
+    return result
+
+def _tri_fill(result:genType, a:Any, b:Any, c:Any, op:Callable[[Any,Any,Any], Any])->None:
+    """Fill `result` slot by slot from three operands, descending while any is a container."""
+    for i in range(result._slot_count()):
+        sa = a[i] if isinstance(a, genType) else a
+        sb = b[i] if isinstance(b, genType) else b
+        sc = c[i] if isinstance(c, genType) else c
+        inner = _first_container(sa, sb, sc)
+        if inner is not None:
+            sub = inner.__class__()
+            _tri_fill(sub, sa, sb, sc, op)
+            _assign_slot(result, i, sub)
+        else:
+            result[i] = op(sa, sb, sc)
+
+def smoothstep(edge0: Union[genType, Number], edge1: Union[genType, Number],
+              x: Union[genType, Number])->Union[genType, float]:
+    # All three arguments are element-wise. The previous body bound edge0 as a
+    # float outside the descent, so a vector edge0 either raised or -- once the
+    # closure reached it -- silently produced zeros.
+    return _tri_op(edge0, edge1, x, _smoothstep, "smoothstep")
 
 def sqrt(x:Union[genType, Number])->Union[genType, float]:
     return _single_op(x, math.sqrt, "sqrt")
@@ -173,8 +235,21 @@ def sqrt(x:Union[genType, Number])->Union[genType, float]:
 def inversesqrt(x:Union[genType, Number])->Union[genType, float]:
     return _single_op(x, lambda x: 1 / math.sqrt(x), "inversesqrt")
 
-def pow(x: genType, y: genType)->genType:
-    return x ** y
+def _pow(x:float, y:float)->float:
+    """GLSL pow() on finite inputs.
+
+    Python's `**` returns a complex number for a negative base with a
+    fractional exponent, which no container slot can hold. GLSL leaves that
+    case undefined; NaN is the useful answer, since it propagates the way an
+    undefined result does in a shader rather than silently becoming real.
+    """
+    if x < 0.0 and y != math.floor(y):
+        return math.nan
+    return float(x ** y)
+
+def pow(x:Union[genType, Number], y:Union[genType, Number])->Union[genType, float]:
+    """GLSL pow. Accepts a bare number, as every element-wise helper does."""
+    return _bin_op(x, y, _pow, "pow")
 
 def exp(x:Union[genType, Number])->Union[genType, float]:
     return _single_op(x, math.exp, "exp")
@@ -521,3 +596,91 @@ def not_(x:Union[genType, Number])->Union[genType, float]:
 
 def sizeof(x:genType)->int:
     return ctypes.sizeof(cast(Any, x))
+
+def magnitude(x:Union[genType, Number])->Union[genType, float]:
+    """MaterialX calls this `magnitude`; it is GLSL's `length`.
+
+    Kept as a distinct name so a transpiler can map it without a rename table.
+    """
+    return length(x)
+
+def atan2(y:Union[genType, Number], x:Union[genType, Number])->Union[genType, float]:
+    """GLSL two-argument arctangent. The single-argument `atan` above is `atan(y/x)`."""
+    return _bin_op(y, x, lambda y, x: math.atan2(y, x), "atan2")
+
+def saturate(x:Union[genType, Number])->Union[genType, float]:
+    return clamp(x, 0.0, 1.0)
+
+def degrees(a:Union[genType, Number])->Union[genType, float]:
+    return _single_op(a, math.degrees, "degrees")
+
+def radians(a:Union[genType, Number])->Union[genType, float]:
+    return _single_op(a, math.radians, "radians")
+
+def _reduce(x:Any, op:Callable[..., float], op_name:str)->float:
+    """Fold every scalar leaf of `x` down to one float.
+
+    A matrix slot is a row, so the leaves are only reached by descending.
+    """
+    if is_number(x):
+        return float(x)
+    if not isinstance(x, genType):
+        raise TypeError(f"{op_name} not supported for type '{x.__class__.__name__}'")
+    leaves:List[float] = []
+    for i in range(x._slot_count()):
+        leaves.append(_reduce(x[i], op, op_name))
+    return op(*leaves)
+
+def mincomponent(x:Union[genType, Number])->float:
+    """Smallest scalar leaf. MaterialX returns float, not the input type."""
+    return _reduce(x, builtins.min, "mincomponent")
+
+def maxcomponent(x:Union[genType, Number])->float:
+    """Largest scalar leaf. MaterialX returns float, not the input type."""
+    return _reduce(x, builtins.max, "maxcomponent")
+
+# Rec.709 luminance coefficients, which is MaterialX's `ND_luminance_color3` default.
+_REC709_LUMA:tuple = (0.2722287, 0.6740818, 0.0536895)
+
+def luminance(c:Union[genType, Number], lumacoeffs:Any=None)->Union[genType, float]:
+    """Dot `c` with the luminance coefficients. Returns float, as MaterialX does."""
+    if not isinstance(c, genType):
+        raise TypeError(f"luminance not supported for type '{c.__class__.__name__}'")
+
+    if lumacoeffs is None:
+        # Imported here rather than at module scope: alias imports genVec, and
+        # funcs is imported from the package __init__ before alias is bound.
+        from .alias import color3f
+        lumacoeffs = color3f(*_REC709_LUMA)
+
+    if not isinstance(lumacoeffs, genType):
+        raise TypeError(f"luminance coefficients must be a container, got '{lumacoeffs.__class__.__name__}'")
+
+    return dot(c, lumacoeffs)
+
+def transformvector(v:Union[genType, Number], m:genMat)->genType:
+    """Transform `v` by matrix `m`. MaterialX calls this `transformmatrix`."""
+    if not isinstance(v, genType):
+        raise TypeError(f"transformvector not supported for type '{v.__class__.__name__}'")
+    if v._slot_count() != m._slot_count():
+        raise TypeError(f"not defined transformvector between '{v.__class__.__name__}' and '{m.__class__.__name__}'")
+
+    result = v.__class__()
+    for row in range(v._slot_count()):
+        acc = 0.0
+        for col in range(m._slot_count()):
+            acc += m.at(row, col) * v[col]
+        result[row] = acc
+    return result
+
+def dFdx(x:Any)->Any:
+    """Screen-space derivative. Declaration only: it needs a renderer."""
+    raise NotImplementedError("dFdx is available only in generated shader code")
+
+def dFdy(x:Any)->Any:
+    """Screen-space derivative. Declaration only: it needs a renderer."""
+    raise NotImplementedError("dFdy is available only in generated shader code")
+
+def fwidth(x:Any)->Any:
+    """Screen-space derivative. Declaration only: it needs a renderer."""
+    raise NotImplementedError("fwidth is available only in generated shader code")
