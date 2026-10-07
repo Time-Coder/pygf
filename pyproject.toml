@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pygf"
-version = "0.1.0"
+version = "0.1.1"
 description = "Graphics math types for Python: vectors, matrices and quaternions on ctypes"
 readme = "README.md"
 # PEP 639 SPDX string rather than the deprecated `{text = "MIT"}` table, so the
