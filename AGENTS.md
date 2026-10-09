@@ -95,6 +95,27 @@ not always catch.
   why the package can be renamed or moved wholesale without touching its insides.
   A dtype in `__dtype_name_map` with no matching module reports a `ValueError`
   naming the width that is missing, rather than a bare `ModuleNotFoundError`.
+- **`fmod` is GLSL's `mod`, not `math.fmod`.** They disagree on every
+  negative operand: `math.fmod(-3.0, 2.0)` is `-1.0` and GLSL's `mod` is
+  `1.0`, because `mod` takes the sign of the divisor. `fmod` therefore
+  delegates to `mod`; `math.fmod` would answer a different question. Same
+  reasoning as `magnitude`/`length`: a distinct spelling so a transpiler can
+  map it without a rename table.
+- **`isnan` / `isinf` / `isfinite` answer a `bool` container, not a float
+  one.** GLSL declares `bvec`, and a ctypes float slot stores `True` as
+  `1.0` -- so routing them through `_single_op` would return a `float3` and
+  lose the type. They go through `_predicate_op`, which asks
+  `genType.gen_type` for a `ctypes.c_bool` type of the same shape, the way
+  `_compare_op` does. This is why they do not share the unary helpers.
+- **`cbrt` and `fma` go through a fallback, not `math` directly.** `math.cbrt`
+  arrived in 3.11 and `math.fma` in 3.13 while this package declares
+  `requires-python = ">=3.10"`; naming either at module scope would break
+  the import outright. The cbrt fallback is a fractional power plus
+  `copysign`, because `(-8) ** (1/3)` is complex in Python and GLSL wants
+  `-2.0`.
+- **`textureSize` is declaration-only**, beside `dFdx`, `dFdy` and
+  `fwidth`: a sampler's size is a fact about the render, so there is nothing
+  to compute in Python and calling it raises.
 - **`funcs.py` shadows builtins deliberately.** It defines `abs`, `min`, `max`,
   `round`, `pow` and `all`, so the bodies that want the builtin say
   `builtins.abs`. Getting this wrong is how `roundEven` came to be a byte-for-byte

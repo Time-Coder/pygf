@@ -684,3 +684,121 @@ def dFdy(x:Any)->Any:
 def fwidth(x:Any)->Any:
     """Screen-space derivative. Declaration only: it needs a renderer."""
     raise NotImplementedError("fwidth is available only in generated shader code")
+
+# ------------------------------------------------------------------ predicates
+
+def _predicate_op(x:Any, op:Callable[[Any], bool], op_name:str)->Any:
+    """Apply a per-leaf predicate, answering a bool container of the same shape.
+
+    `_single_op` builds a container of the input's own class, which cannot hold a
+    bool: the numeric slots are ctypes float fields, so a True would be stored as
+    1.0 and `isnan(vec3)` would come back a float3 rather than the bvec GLSL
+    declares. So the result type is asked for the way `genType._compare_op` asks
+    for it -- same math_form, `ctypes.c_bool` instead of the numeric dtype.
+    """
+    if is_number(x):
+        return op(x)
+    elif isinstance(x, genType):
+        result:genType = x.gen_type(x.math_form, ctypes.c_bool, x.shape)()
+        for i in range(x._slot_count()):
+            _assign_slot(result, i, _predicate_op(x[i], op, op_name))
+
+        return result
+    else:
+        raise TypeError(f"{op_name} not supported for type {x.__class__.__name__}")
+
+
+def isnan(x:Union[genType, Number])->Any:
+    """`x != x`, which is a NaN test in IEEE arithmetic and no other language's."""
+    return _predicate_op(x, lambda v: v != v, "isnan")
+
+def isinf(x:Union[genType, Number])->Any:
+    return _predicate_op(x, math.isinf, "isinf")
+
+def isfinite(x:Union[genType, Number])->Any:
+    return _predicate_op(x, math.isfinite, "isfinite")
+
+
+# ------------------------------------------------- functions math grew late
+
+# `math.cbrt` arrived in 3.11 and `math.fma` in 3.13, but this package declares
+# `requires-python = ">=3.10"`. Referencing either unconditionally would make the
+# import of this module fail outright on an older interpreter, so the fallbacks
+# are resolved once at import and named here rather than at each call site.
+
+def _cbrt(v:float)->float:
+    if hasattr(math, "cbrt"):
+        return cast(float, math.cbrt(v))
+
+    # copysign carries the sign across, which a fractional power would drop:
+    # (-8) ** (1/3) is complex in Python and 2.0 in C, and GLSL wants -2.0.
+    # builtins.abs, not the module's own -- this file's `abs` is a genType wrapper
+    # and its return type would not be copysign's to take.
+    return math.copysign(builtins.abs(v) ** (1.0 / 3.0), v)
+
+def _fma(a:float, b:float, c:float)->float:
+    if hasattr(math, "fma"):
+        return cast(float, math.fma(a, b, c))
+
+    # Not fused, and the difference is exactly the rounding the name promises to
+    # avoid. It is still the correct answer, so a caller that does not need the
+    # last bit -- which is every shader consumer here -- gets one.
+    return a * b + c
+
+def cbrt(x:Union[genType, Number])->Union[genType, float]:
+    """Real cube root, sign preserved. GLSL has this; Python spells it `** 1/3`."""
+    return _single_op(x, _cbrt, "cbrt")
+
+def expm1(x:Union[genType, Number])->Union[genType, float]:
+    """`exp(x) - 1`, accurate for `x` near zero where that subtraction cancels."""
+    return _single_op(x, math.expm1, "expm1")
+
+def log1p(x:Union[genType, Number])->Union[genType, float]:
+    """`log(1 + x)`, accurate for `x` near zero."""
+    return _single_op(x, math.log1p, "log1p")
+
+def ldexp(x:Union[genType, Number], exponent:int)->Union[genType, float]:
+    """`x * 2 ** exponent`, by exponent adjustment rather than by power.
+
+    GLSL declares the second operand as `in int`, not as a genType, so this is a
+    unary helper with a captured parameter -- routing it through `_bin_op` would
+    demand a second operand of the same shape and reject the scalar exponent GLSL
+    actually allows.
+    """
+    return _single_op(x, lambda v: math.ldexp(v, exponent), "ldexp")
+
+def fma(a:Union[genType, Number], b:Union[genType, Number],
+        c:Union[genType, Number])->Union[genType, float]:
+    """`a * b + c` in one rounding. GLSL's three-operand form."""
+    return _tri_op(a, b, c, _fma, "fma")
+
+def hypot(x:Union[genType, Number], y:Union[genType, Number])->Union[genType, float]:
+    """Euclidean length of (x, y), without the overflow `sqrt(x*x + y*y)` has."""
+    return _bin_op(x, y, math.hypot, "hypot")
+
+
+# ------------------------------------------------------------- renamed calls
+
+def fabs(x:Union[genType, Number])->Union[genType, float]:
+    """GLSL has no `fabs`; it calls this `abs`. Kept as a distinct name so a
+    transpiler can map it without a rename table -- the same reason `magnitude`
+    exists alongside `length`. Python's `math.fabs` is this function too.
+    """
+    return abs(x)
+
+def fmod(x:Union[genType, float], y:Union[genType, float])->Union[genType, float]:
+    """GLSL's `mod`, under the name C and MaterialX spell it.
+
+    This is NOT Python's `math.fmod`, which truncates toward zero and so returns
+    -1.0 for fmod(-3.0, 2.0) where GLSL's mod returns 1.0 -- a result carrying the
+    sign of the divisor. Delegating to `mod` rather than to `math.fmod` is the
+    whole point of the name.
+    """
+    return mod(x, y)
+
+
+# -------------------------------------------------------- renderer-only calls
+
+def textureSize(sampler:Any, lod:int)->Any:
+    """Declaration only: a sampler's size is a fact about the render."""
+    raise NotImplementedError("textureSize is available only in generated shader code")

@@ -84,6 +84,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import pygf
 from pygf import funcs
+from pygf.bool3 import bool3
 from pygf.alias import color3f
 from pygf.double3 import double3
 from pygf.float2 import float2
@@ -562,6 +563,87 @@ for _fn in (funcs.dFdx, funcs.dFdy, funcs.fwidth):
         check(f"{_fn.__name__} is declaration-only", "returned", "NotImplementedError")
     except NotImplementedError:
         check(f"{_fn.__name__} is declaration-only", "NotImplementedError", "NotImplementedError")
+
+# ---------------------------------------------------------------------------
+# The builtins that were missing. Each of these is one a shader can call and
+# pygf could not, so a transpiler had to carry a private copy of it -- and a
+# private copy is a second implementation, which is where they drift.
+
+# `cbrt` and `fma` resolve through fallbacks because `math` grew them in 3.11 and
+# 3.13 while this package declares `requires-python = ">=3.10"`. Importing the
+# module on an older interpreter must not fail, and a fractional power would
+# answer 2.0 for (-8) ** (1/3) where GLSL wants -2.0.
+check("cbrt keeps the sign of its argument", funcs.cbrt(-8.0), -2.0)
+check("cbrt of zero", funcs.cbrt(0.0), 0.0)
+check("cbrt agrees with math.cbrt on a positive input", funcs.cbrt(27.0), 3.0)
+check("fma multiplies and adds", funcs.fma(2.0, 3.0, 1.0), 7.0)
+
+# `exp` then subtract would cancel near zero; that is the reason these two exist.
+check("expm1 is exact at zero", funcs.expm1(0.0), 0.0)
+check("log1p is exact at zero", funcs.log1p(0.0), 0.0)
+check("expm1 stays small where exp-1 cancels",
+      funcs.expm1(1e-12) < 1.0000001e-12, True)
+
+# GLSL declares `ldexp(genType x, in int exp)`: the exponent is an integer, not
+# an operand of the vector's shape. Routing it through the two-operand helper
+# would reject the scalar exponent GLSL actually allows.
+check("ldexp scales by a power of two", funcs.ldexp(1.0, 3), 8.0)
+check("ldexp scales down too", funcs.ldexp(8.0, -3), 1.0)
+check("ldexp takes a container with a scalar exponent",
+      list(cast(float3, funcs.ldexp(float3(1.0, 2.0, 3.0), 2))),
+      [4.0, 8.0, 12.0])
+
+check("fabs is abs under its C name", funcs.fabs(-2.5), 2.5)
+check("hypot is the 2-argument length", funcs.hypot(3.0, 4.0), 5.0)
+
+# `fmod` is GLSL's `mod`, not Python's `math.fmod`. Delegating to math.fmod
+# would answer -1.0 where the shader answers 1.0, and the sign of the divisor is
+# the only difference between the two.
+check("fmod follows GLSL for a negative operand",
+      (funcs.fmod(-3.0, 2.0), math.fmod(-3.0, 2.0)), (1.0, -1.0))
+check("fmod agrees with mod", funcs.fmod(-7.0, 4.0), funcs.mod(-7.0, 4.0))
+
+# The predicates answer a bool. A float container would be the wrong type twice
+# over: GLSL declares bvec, and a ctypes float slot stores True as 1.0.
+_nan = float("nan")
+_inf = float("inf")
+check("isnan sees a NaN", funcs.isnan(_nan), True)
+check("isnan misses an infinity", funcs.isnan(_inf), False)
+check("isinf sees an infinity", funcs.isinf(_inf), True)
+check("isfinite rejects both", (funcs.isfinite(_nan), funcs.isfinite(_inf)),
+      (False, False))
+check("isfinite accepts an ordinary number", funcs.isfinite(1.5), True)
+
+_mixed = float3(_nan, _inf, 1.5)
+for _name in ("isnan", "isinf", "isfinite"):
+    _r = getattr(funcs, _name)(_mixed)
+    # The type is the assertion: a float3 would pass any elementwise comparison.
+    check(f"{_name} answers a bool container", type(_r).__name__, "bool3")
+check("isnan is per leaf",
+      list(cast(bool3, funcs.isnan(_mixed))), [True, False, False])
+check("isinf is per leaf",
+      list(cast(bool3, funcs.isinf(_mixed))), [False, True, False])
+check("isfinite is per leaf",
+      list(cast(bool3, funcs.isfinite(_mixed))), [False, False, True])
+check("the predicates follow the shape of a matrix",
+      type(funcs.isnan(pygf.matrix33(1.0))).__name__, "matrix3b")
+
+# The numeric helpers stay element-wise on containers, like every other one.
+check("cbrt on a container",
+      list(cast(float3, funcs.cbrt(float3(-8.0, 27.0, 0.0)))),
+      [-2.0, 3.0, 0.0])
+check("fabs on a container",
+      list(cast(float3, funcs.fabs(float3(-1.0, 2.0, -3.5)))),
+      [1.0, 2.0, 3.5])
+check("fma on a container",
+      list(cast(float3, funcs.fma(float3(1.0, 2.0, 3.0), float3(4.0, 5.0, 6.0),
+                                 float3(7.0, 8.0, 9.0)))),
+      [11.0, 18.0, 27.0])
+
+# `textureSize` is declaration-only for the same reason dFdx is: a sampler's
+# size is a fact about the render.
+check_raises("textureSize is declaration-only", NotImplementedError,
+             lambda: funcs.textureSize("sampler", 0))
 
 print()
 if FAILURES:
