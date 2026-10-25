@@ -22,9 +22,7 @@ class int4(genVec4):
         ('w', ctypes.c_int)
     ]
 
-    @property
-    def dtype(self)->type:
-        return ctypes.c_int
+    
 
     if TYPE_CHECKING:
 

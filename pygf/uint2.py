@@ -18,9 +18,7 @@ class uint2(genVec2):
         ('y', ctypes.c_uint)
     ]
 
-    @property
-    def dtype(self)->type:
-        return ctypes.c_uint
+    
 
     if TYPE_CHECKING:
 

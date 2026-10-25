@@ -142,6 +142,27 @@ def _is_container(obj:Any)->bool:
 
     return hasattr(obj, "rows") and hasattr(obj, "cols")
 
+def _record(obj:Any)->Any:
+    """One pygf container as a keyed record suitable for a structured dtype.
+
+    A tuple of the container's component values, read through the public
+    component accessors (so a half slot decodes to a float). numpy builds a
+    structured array from a sequence of these when a dtype with fields is given;
+    the field names line up with ``_component_names`` and therefore with the
+    dtype given to ``np.array``. Used only when a structured dtype is requested;
+    otherwise ``_flatten`` keeps the plain-array behaviour.
+    """
+    if hasattr(obj, "_fields_"):
+        return tuple(_raw_components(obj))
+
+    if isinstance(obj, (list, tuple)):
+        return tuple(_record(ele) for ele in obj)
+
+    # A matrix (no _fields_): not representable as a component record, so recurse
+    # row-wise; the caller that handed numpy a structured dtype gets nested rows.
+    return tuple(_record(row) for row in obj)
+
+
 def _flatten(obj:Any)->Any:
     """A plain nested list of floats for a pygf container.
 
@@ -187,6 +208,13 @@ def patch_nparray():
       * A half type stores uint16 bit patterns in private ``_hx`` fields, so the
         component names have to be mapped back to the public ones before reading,
         or numpy is handed the bit patterns.
+
+    When a structured dtype is passed (a dtype with named ``fields``), containers
+    become keyed records instead of flattened floats, so numpy builds the correct
+    structured array: ``np.array([float4(1,2,3,4), float4(5,6,7,8)],
+    dtype=float4.numpy_dtype())`` yields two (x, y, z, w) records, not a
+    transposed 2x4 grid. Without a structured dtype the flatten behaviour is
+    unchanged.
     """
     if np.array.__module__ != "numpy":
         return
@@ -195,6 +223,14 @@ def patch_nparray():
 
     def array(*args, **kwargs):
         obj = args[0] if args else None
+        dtype = kwargs.get("dtype")
+
+        if dtype is not None and getattr(dtype, "fields", None) is not None:
+            if _is_container(obj):
+                return np_array(_record(obj), *args[1:], **kwargs)
+
+            if isinstance(obj, (list, tuple)) and any(_is_container(ele) for ele in obj):
+                return np_array([_record(ele) for ele in obj], *args[1:], **kwargs)
 
         if _is_container(obj):
             return np_array(_flatten(obj), *args[1:], **kwargs)

@@ -20,9 +20,7 @@ class bool3(genVec3):
         ('z', ctypes.c_bool)
     ]
 
-    @property
-    def dtype(self)->type:
-        return ctypes.c_bool
+    
 
     if TYPE_CHECKING:
 

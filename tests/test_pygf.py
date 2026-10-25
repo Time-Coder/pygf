@@ -202,17 +202,17 @@ check_raises("outerProduct refuses unequal lengths", TypeError,
 check_raises("mat_type refuses a non-square shape", ValueError,
              lambda: genMat.mat_type(ctypes.c_double, (3, 2)))
 
-# --- bool result types have to exist ----------------------------------------
+# --- vector comparisons produce intN result vectors ----------------------
 print()
-print("--- vector comparisons produce bool vectors ---")
+print("--- vector comparisons produce intN vectors ---")
 check("float2 less-than", components(V2(1, 2) < V2(2, 1)), (True, False))
 check("float3 less-than", components(V3(1, 2, 3) < V3(3, 2, 1)), (True, False, False))
 check("float3 greater-equal", components(V3(1, 2, 3) >= V3(3, 2, 1)), (False, True, True))
 check("float4 less-equal", components(V4(1, 2, 3, 4) <= V4(4, 3, 2, 1)), (True, True, False, False))
 check("scalar against vector", components(V3(1, 2, 3) > 2.0), (False, False, True))
-check("bool3 result type", type(V3(1, 2, 3) < V3(3, 2, 1)).__name__, "bool3")
-check("bool2 result type", type(V2(1, 2) < V2(2, 1)).__name__, "bool2")
-check("bool4 result type", type(V4(1, 2, 3, 4) <= V4(4, 3, 2, 1)).__name__, "bool4")
+check("int3 result type", type(V3(1, 2, 3) < V3(3, 2, 1)).__name__, "int3")
+check("int2 result type", type(V2(1, 2) < V2(2, 1)).__name__, "int2")
+check("int4 result type", type(V4(1, 2, 3, 4) <= V4(4, 3, 2, 1)).__name__, "int4")
 
 # --- not_ instantiates its result -------------------------------------------
 print()

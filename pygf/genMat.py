@@ -4,7 +4,7 @@ import ctypes
 from collections.abc import Callable
 from typing import Any, Tuple, TypeAlias, Union, cast
 
-from .genType import MathForm, genType
+from .genType import MathForm, _equal_leaves, genType
 from .genVec import VecType, genVec
 from .helper import is_number
 
@@ -167,7 +167,10 @@ class genMat(genType, ctypes.Array):
                        for i in range(self.rows) for j in range(self.cols))
         elif isinstance(value, genVec) and len(value) == self.cols:
             for i in range(self.rows):
-                if self[i] == value:
+                # `row == value` now yields an intN vector (vectors compare
+                # element-wise to match the GPU), so membership needs the leaf
+                # walk that still answers a single bool.
+                if _equal_leaves(self[i], value):
                     return True
 
         return False

@@ -18,9 +18,7 @@ class float2(genVec2):
         ('y', ctypes.c_float)
     ]
 
-    @property
-    def dtype(self)->type:
-        return ctypes.c_float
+    
 
     if TYPE_CHECKING:
 

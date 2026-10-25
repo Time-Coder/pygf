@@ -1,4 +1,3 @@
-import ctypes
 from typing import TYPE_CHECKING, Union
 
 from .genVec2 import genVec2
@@ -18,11 +17,7 @@ class half2(genVec2):
 
     x, y = half_properties("xy")
 
-    @property
-    def dtype(self)->type:
-        # The storage type, not a Python float type: genType promotes on dtype,
-        # and this is what tells half2 from float2.
-        return ctypes.c_uint16
+    
 
     if TYPE_CHECKING:
 

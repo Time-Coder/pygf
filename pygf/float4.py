@@ -22,9 +22,7 @@ class float4(genVec4):
         ('w', ctypes.c_float)
     ]
 
-    @property
-    def dtype(self)->type:
-        return ctypes.c_float
+    
 
     if TYPE_CHECKING:
 

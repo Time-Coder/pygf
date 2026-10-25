@@ -20,9 +20,7 @@ class uint3(genVec3):
         ('z', ctypes.c_uint)
     ]
 
-    @property
-    def dtype(self)->type:
-        return ctypes.c_uint
+    
 
     if TYPE_CHECKING:
 

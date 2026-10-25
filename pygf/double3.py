@@ -20,9 +20,7 @@ class double3(genVec3):
         ('z', ctypes.c_double)
     ]
 
-    @property
-    def dtype(self)->type:
-        return ctypes.c_double
+    
 
     if TYPE_CHECKING:
 

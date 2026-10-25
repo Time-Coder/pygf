@@ -1,4 +1,3 @@
-import ctypes
 from typing import TYPE_CHECKING, Union
 
 from .genVec3 import genVec3
@@ -19,9 +18,7 @@ class half3(genVec3):
 
     x, y, z = half_properties("xyz")
 
-    @property
-    def dtype(self)->type:
-        return ctypes.c_uint16
+    
 
     if TYPE_CHECKING:
 

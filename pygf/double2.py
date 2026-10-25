@@ -18,9 +18,7 @@ class double2(genVec2):
         ('y', ctypes.c_double)
     ]
 
-    @property
-    def dtype(self)->type:
-        return ctypes.c_double
+    
 
     if TYPE_CHECKING:
 

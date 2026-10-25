@@ -18,9 +18,7 @@ class bool2(genVec2):
         ('y', ctypes.c_bool)
     ]
 
-    @property
-    def dtype(self)->type:
-        return ctypes.c_bool
+    
 
     if TYPE_CHECKING:
 

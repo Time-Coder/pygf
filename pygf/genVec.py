@@ -12,7 +12,10 @@ from typing import (
     Tuple,
     TypeAlias,
     Union,
+    cast,
 )
+
+import numpy as np
 
 from .genType import MathForm, genType
 from .helper import (
@@ -27,7 +30,28 @@ if TYPE_CHECKING:
     from .genMat import genMat
 
 
+class _VectorDtype:
+    """Non-data descriptor that answers ``vec_class.dtype`` and ``vec.dtype``.
+
+    On the class it returns the structured numpy dtype for the whole vector
+    (``np.dtype(cls._fields_)``) -- the value PyGPGPU's host-side ``float4.dtype``
+    historically exposed -- so ``np.array(..., dtype=float4.dtype)`` keeps
+    working. On an instance it returns the scalar ctypes type that pygf's type
+    arithmetic (``vec_type(self.dtype, ...)``) needs, unchanged from the old
+    property. A non-data descriptor (no ``__set__``) is required so that both the
+    class- and instance-level reads are supported; a plain ``property`` could not
+    return different values to the two.
+    """
+    def __get__(self, obj:Optional[genVec], objtype:Optional[type] = None)->Any:
+        if obj is None:
+            return np.dtype(cast(Any, objtype)._fields_)
+
+        return cast(Any, objtype)._fields_[0][1]
+
+
 class genVec(genType, ctypes.Structure):
+
+    dtype = _VectorDtype()
 
     _attr_index_map:Dict[str, int] = {
         'x': 0,
@@ -111,6 +135,18 @@ class genVec(genType, ctypes.Structure):
     def shape(self)->Tuple[int]:
         return (len(self),)
 
+    @classmethod
+    def numpy_dtype(cls)->Any:
+        """The structured numpy dtype for this vector type.
+
+        Built from the ctypes ``_fields_`` (``('x', c_float)`` and friends), so
+        ``np.dtype(cls.numpy_dtype())`` names each component x/y/z as a floating
+        or integer scalar exactly as the type stores it. ``cls.dtype`` returns
+        the same value on the class (see ``_VectorDtype``); this method exists
+        so 2/4-width code can ask for it without relying on descriptor semantics.
+        """
+        return np.dtype(cls._fields_)
+
     @staticmethod
     def vec_type(dtype:type, size:int)->type:
         return genType.gen_type(MathForm.Vec, dtype, (size,))
@@ -127,12 +163,65 @@ class genVec(genType, ctypes.Structure):
 
             self._related_mat._call_on_changed()
 
+    def _compare_op(self, operator:str, other:Union[float, bool, int, genType])->genVec:
+        """Element-wise comparison returning an ``intN`` vector, not a bool one.
+
+        This matches both PyGPGPU's GPU behaviour (CUDA/OpenCL translate a vector
+        comparison into per-component 0/1 in an integer vector) and its legacy
+        ``genVec._compare_op``. ``==``/``!=`` therefore return an ``int2/3/4`` too,
+        unlike ``genType`` where they answer a Python ``bool`` -- this override
+        keeps vectors aligned with the device while matrices and quaternions keep
+        the GLSL-style boolean result.
+        """
+        other_is_homo:bool = self._is_homo(other)
+        if not other_is_homo and not is_number(other):
+            return NotImplemented
+
+        itype:type = genType.gen_type(self.math_form, ctypes.c_int, self.shape)
+        result:genVec = itype()
+
+        operator_func:Callable[[Any, Any], Any] = self._operator_funcs[operator]
+        for i in range(len(self)):
+            result[i] = int(operator_func(self[i], genType._at(other, i) if other_is_homo else other))
+
+        return result
+
+    def _compare_rop(self, operator:str, other:Union[float, bool, int, genType])->genVec:
+        if not is_number(other):
+            return NotImplemented
+
+        itype:type = genType.gen_type(self.math_form, ctypes.c_int, self.shape)
+        result:genVec = itype()
+
+        operator_func:Callable[[Any, Any], Any] = self._operator_funcs[operator]
+        for i in range(len(result)):
+            result[i] = int(operator_func(other, self[i]))
+
+        return result
+
+    def __eq__(self:Any, other:object)->Any:
+        if not self._is_homo(other) and not is_number(other):
+            return False
+        return self._compare_op("==", cast(Any, other))
+
+    def __req__(self, other:object)->Any:
+        return self._compare_rop("==", cast(Any, other))
+
+    def __ne__(self:Any, other:object)->Any:
+        if not self._is_homo(other) and not is_number(other):
+            return True
+        return self._compare_op("!=", cast(Any, other))
+
+    def __rne__(self, other:object)->Any:
+        return self._compare_rop("!=", cast(Any, other))
+
     def __getattr__(self, name:str)->Union[float,bool,int,genVec]:
         if name not in self.__getter_swizzles():
             raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
 
+        indices:List[int] = [self._attr_index_map[ch] for ch in name]
         vec_type = self.vec_type(self.dtype, len(name))
-        return vec_type(*(getattr(self, ch) for ch in name))
+        return vec_type(*(self[i] for i in indices))
 
     def __setattr__(self, name:str, value:Union[float,bool,int,genVec]):
         if hasattr(self.__class__, name) or in_annotations(name, self.__class__):
