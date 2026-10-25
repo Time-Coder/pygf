@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import ctypes
-import math
 from collections.abc import Callable, Iterable
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple, Union, cast
@@ -10,6 +9,14 @@ from .helper import (
     Number as Number,  # re-exported: defined in helper so is_number can use it
 )
 from .helper import from_import, is_number
+
+
+def _product(values: Iterable[int]) -> int:
+    """Product of an iterable; Python < 3.8 replacement for ``math.prod``."""
+    total: int = 1
+    for value in values:
+        total *= value
+    return total
 
 
 class MathForm(Enum):
@@ -158,7 +165,7 @@ class genType:
         dtype_name:str = genType.__dtype_name_map[dtype]
         suffix:str = dtype_name[0]
         if key not in genType.__gen_type_map:
-            if math.prod(shape) == 1 or math_form == MathForm.Scalar:
+            if _product(shape) == 1 or math_form == MathForm.Scalar:
                 genType.__gen_type_map[key] = genType.__dtype_python_type_map[dtype]
             elif math_form == MathForm.Vec:
                 result_name:str = f"{dtype_name}{shape[0]}"

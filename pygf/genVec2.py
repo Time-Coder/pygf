@@ -1,4 +1,5 @@
-from typing import Tuple, TypeAlias, Union
+from typing import Tuple, Union
+from typing_extensions import TypeAlias
 
 from .genVec import genVec
 from .helper import Number

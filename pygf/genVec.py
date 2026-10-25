@@ -10,10 +10,10 @@ from typing import (
     Optional,
     Set,
     Tuple,
-    TypeAlias,
     Union,
     cast,
 )
+from typing_extensions import TypeAlias
 
 import numpy as np
 

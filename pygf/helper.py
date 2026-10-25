@@ -1,10 +1,13 @@
+from __future__ import annotations
+
 import ctypes
 import importlib
 import itertools
 from collections.abc import Iterable
 from decimal import Decimal
 from types import ModuleType
-from typing import Any, Dict, List, TypeAlias, Union
+from typing import Any, Dict, List, Union
+from typing_extensions import TypeAlias
 
 import numpy as np
 

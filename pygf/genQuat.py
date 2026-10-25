@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import ctypes
 import math
-from typing import Any, Tuple, TypeAlias, Union, cast
+from typing import Any, Tuple, Union, cast
+from typing_extensions import TypeAlias
 
 from .genType import MathForm, genType
 from .genVec import genVec

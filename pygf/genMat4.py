@@ -1,4 +1,5 @@
-from typing import Tuple, TypeAlias, Union
+from typing import Tuple, Union
+from typing_extensions import TypeAlias
 
 from .genMat import genMat
 from .genVec4 import Vec4Type

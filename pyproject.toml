@@ -11,7 +11,7 @@ readme = "README.md"
 # built metadata carries `License-Expression` and twine stops warning.
 license = "MIT"
 license-files = ["LICENSE"]
-requires-python = ">=3.10"
+requires-python = ">=3.7"
 authors = [
     {name = "王炳辉", email = "binghui.wang@foxmail.com"}
 ]
@@ -33,6 +33,9 @@ classifiers = [
     # expression above, and setuptools rejects the two together.
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -43,7 +46,10 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "numpy"
+    # typing_extensions backports typing.TypeAlias to Python 3.7/3.8 (3.10 introduced it).
+    "typing_extensions>=4.4.0",
+    # numpy still ships 3.7/3.8 wheels; >=1.21 is the last line that supports 3.7.
+    "numpy>=1.21",
 ]
 
 # `dev` is what static_check.py needs. `publish` is what `python publish.py

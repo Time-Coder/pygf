@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import ctypes
 from collections.abc import Callable
-from typing import Any, Tuple, TypeAlias, Union, cast
+from typing import Any, Tuple, Union, cast
+from typing_extensions import TypeAlias
 
 from .genType import MathForm, _equal_leaves, genType
 from .genVec import VecType, genVec
