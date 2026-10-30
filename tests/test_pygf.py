@@ -363,6 +363,16 @@ check("abs of a matrix of -3", as_rows(funcs.abs(matrix3d(0.0, -3.0, 0.0,
                                                          0.0, 0.0, -9.0))),
       [[0.0, 3.0, 0.0], [0.0, 6.0, 0.0], [0.0, 0.0, 9.0]])
 check("sqrt of the identity", as_matrix(funcs.sqrt(matrix4d())).at(0, 0), 1.0)
+# inversesqrt has to answer what the hardware answers, not raise: a GPU returns an
+# infinity for a zero and NaN for a negative, so a kernel that relies on either would
+# work on a device and blow up in the interpreter.
+check("inversesqrt of a square", funcs.inversesqrt(4.0), 0.5)
+check("inversesqrt of zero", funcs.inversesqrt(0.0), math.inf)
+check("inversesqrt of negative zero", funcs.inversesqrt(-0.0), -math.inf)
+check("inversesqrt of a negative", funcs.inversesqrt(-1.0) != funcs.inversesqrt(-1.0), True)
+check("inversesqrt of NaN", funcs.inversesqrt(float("nan")) != funcs.inversesqrt(float("nan")), True)
+check("inversesqrt of a vector with a zero",
+      components(funcs.inversesqrt(V3(4.0, 0.0, -1.0)))[:2], (0.5, math.inf))
 check("floor of a matrix", row0(funcs.floor(matrix3d(1.5, -1.5, 2.5,
                                                     0.0, 0.0, 0.0,
                                                     0.0, 0.0, 0.0))), [1.0, -2.0, 2.0])

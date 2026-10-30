@@ -234,8 +234,26 @@ def smoothstep(edge0: Union[genType, Number], edge1: Union[genType, Number],
 def sqrt(x:Union[genType, Number])->Union[genType, float]:
     return _single_op(x, math.sqrt, "sqrt")
 
+def _inversesqrt(x:float)->float:
+    """GLSL inversesqrt on the inputs plain arithmetic refuses.
+
+    `1 / math.sqrt(x)` raises for both of them: ZeroDivisionError on a zero, where
+    the hardware returns an infinity, and ValueError on a negative, where it returns
+    NaN. GLSL leaves both cases undefined, so the device's answer is the one worth
+    matching -- otherwise a kernel that relies on the infinity (a normalising
+    reciprocal, say) works on a GPU and raises in the host interpreter. The sign of a
+    zero is carried through because `inversesqrt(-0.0)` is negative infinity there.
+    """
+    if math.isnan(x):
+        return x
+    if x == 0.0:
+        return math.copysign(math.inf, x)
+    if x < 0.0:
+        return math.nan
+    return 1 / math.sqrt(x)
+
 def inversesqrt(x:Union[genType, Number])->Union[genType, float]:
-    return _single_op(x, lambda x: 1 / math.sqrt(x), "inversesqrt")
+    return _single_op(x, _inversesqrt, "inversesqrt")
 
 def _pow(x:float, y:float)->float:
     """GLSL pow() on finite inputs.
