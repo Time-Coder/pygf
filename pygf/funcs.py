@@ -61,7 +61,12 @@ def ceil(x:Union[genType, Number])->Union[genType, float]:
 def trunc(x:Union[genType, Number])->Union[genType, float]:
     # math.trunc returns an int, but GLSL trunc is a float operation and the
     # container path assigns through a ctypes float field. Wrap it.
-    return _single_op(x, lambda x: float(math.trunc(x)), "trunc")
+    #
+    # The `float(...)` in front is load-bearing for numpy scalars: `math.trunc` goes
+    # through `__trunc__`, which numpy's float32 does not define (its `__floor__` and
+    # `__ceil__` exist, which is why floor/ceil are fine), so a numpy value raised
+    # TypeError instead of truncating.
+    return _single_op(x, lambda x: float(math.trunc(float(x))), "trunc")
 
 def round(x:Union[genType, Number])->Union[genType, float]:
     return _single_op(x, lambda x: math.floor(x + 0.5) if x >= 0 else math.ceil(x - 0.5), "round")

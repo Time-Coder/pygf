@@ -543,6 +543,16 @@ check("sign(3.0)", cast(float, funcs.sign(3.0)), 1.0)
 check("trunc returns float", type(cast(float, funcs.trunc(1.5))).__name__, "float")
 check("trunc(1.5)", cast(float, funcs.trunc(1.5)), 1.0)
 check("trunc(-1.5)", cast(float, funcs.trunc(-1.5)), -1.0)
+# A numpy scalar has no `__trunc__` (unlike its `__floor__`/`__ceil__`), so reaching
+# math.trunc directly raised TypeError for the one numeric type a caller is most likely to
+# hold after reading an array element. `Number` in the signature is int/float, so the
+# checker needs telling that a numpy scalar is accepted at run time (it goes through
+# is_number, which any numeric satisfies).
+check("trunc of a numpy scalar", cast(float, funcs.trunc(cast(Any, np.float32(2.7)))), 2.0)
+check("trunc of a numpy vector",
+      components(funcs.trunc(V3(cast(Any, np.float32(1.7)), cast(Any, np.float32(-1.7)),
+                                 cast(Any, np.float32(2.2))))),
+      (1.0, -1.0, 2.0))
 
 # Python's ** returns a complex number for a negative base with a fractional
 # exponent, which no container slot can hold.
