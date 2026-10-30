@@ -61,6 +61,144 @@ def _equal_leaves(x:Any, y:Any)->bool:
 
     return bool(x == y)
 
+# --- alias roles ---------------------------------------------------------------------------
+# A `point3f` is a `float3` that *means* a position, and a `color3f` is a `float3` that means a
+# colour. Arithmetic has to keep the meaning, not only the numbers: position - position is a
+# displacement, position + displacement is a position, and position + position is not a
+# position at all. The canonical result type is still the base vector, so this table only says
+# which alias of it the result should wear.
+#
+# `alias.py` fills it in rather than this module importing that one: alias.py imports the
+# concrete vector types, which import this module.
+_ALIAS_ROLES:Dict[type, str] = {}
+_ALIAS_BASES:Dict[type, type] = {}
+_ALIAS_TYPES:Dict[Tuple[type, str], type] = {}
+
+# A value that is a position; adding two of them is meaningless in affine space.
+POSITION_ROLE:str = "position"
+# A value that is a direction or offset -- what the base vector type already means.
+DIRECTION_ROLE:str = "direction"
+# A value that is specifically the displacement between two positions, so that `p - p` can
+# answer `vector3f` when that alias exists rather than the anonymous base vector.
+DISPLACEMENT_ROLE:str = "displacement"
+# A value whose components are independently meaningful and survive component-wise arithmetic.
+COMPONENT_ROLE:str = "component"
+
+
+def register_alias_role(alias_type:type, base:type, role:str)->None:
+    """Record that ``alias_type`` is ``base`` under the meaning ``role``."""
+    _ALIAS_ROLES[alias_type] = role
+    _ALIAS_BASES[alias_type] = base
+    _ALIAS_TYPES.setdefault((base, role), alias_type)
+
+
+def _alias_for(base:type, role:str)->Optional[type]:
+    return _ALIAS_TYPES.get((base, role))
+
+
+def _role_of(value:Any)->Optional[str]:
+    """The meaning a value carries. A plain vector *is* a direction, which is its whole job."""
+    if not isinstance(value, genType):
+        return None
+    return _ALIAS_ROLES.get(type(value), DIRECTION_ROLE)
+
+
+def _alias_result_type(operator:str, value1:Any, value2:Any,
+                       result_base:type)->Optional[type]:
+    """The alias class an arithmetic result should wear, or None for the plain base vector.
+
+    The policy is: a result that has a mathematical meaning takes the type that meaning calls
+    for; one that does not keeps the operand's name when both sides are the same type, and
+    falls back to the base vector when they are not. Nothing here raises -- a meaningless
+    combination is still a number, it just stops claiming a meaning.
+    """
+    left:Optional[str] = _role_of(value1)
+    right:Optional[str] = _role_of(value2)
+    left_class:Optional[type] = type(value1) if isinstance(value1, genType) else None
+    right_class:Optional[type] = type(value2) if isinstance(value2, genType) else None
+    directed:Tuple[Optional[str], ...] = (DIRECTION_ROLE, DISPLACEMENT_ROLE)
+
+    # A scalar broadcasts, which scales or offsets a meaning without changing it.
+    if left_class is not None and right_class is None:
+        return left_class if _ALIAS_BASES.get(left_class) is result_base else None
+    if right_class is not None and left_class is None:
+        return right_class if _ALIAS_BASES.get(right_class) is result_base else None
+    if left_class is None and right_class is None:
+        return None
+
+    # The affine operations that do have a meaning.
+    if operator == "-" and left == POSITION_ROLE and right == POSITION_ROLE:
+        return _alias_for(result_base, DISPLACEMENT_ROLE)
+    if operator == "+" and (left == POSITION_ROLE) != (right == POSITION_ROLE):
+        other:Optional[str] = right if left == POSITION_ROLE else left
+        if other in directed:
+            return _alias_for(result_base, POSITION_ROLE)
+    if operator == "-" and left == POSITION_ROLE and right in directed:
+        return _alias_for(result_base, POSITION_ROLE)
+
+    # No meaning left to apply: the same type on both sides keeps its name, anything else
+    # falls back to the base vector rather than picking one of the two names at random.
+    if left_class is not None and left_class is right_class:
+        if _ALIAS_BASES.get(left_class) is result_base:
+            return left_class
+    return None
+
+
+def direction_result_class(value:Any)->Optional[type]:
+    """The class a *direction* derived from ``value`` should wear, or None for the base vector.
+
+    `normalize`, `reflect` and `refract` all answer a direction whatever they were handed, so
+    a position has to lose its name (a unit-length position is not a position) while a named
+    direction keeps its own.
+    """
+    if not isinstance(value, genType):
+        return None
+    cls:type = type(value)
+    role:Optional[str] = _ALIAS_ROLES.get(cls)
+    base:Optional[type] = _ALIAS_BASES.get(cls)
+    if role in (DIRECTION_ROLE, DISPLACEMENT_ROLE):
+        return cls
+    if role == POSITION_ROLE and base is not None:
+        return _alias_for(base, DISPLACEMENT_ROLE)
+    if base is not None:
+        # A colour or texcoord has no direction to name, so the result stops claiming to be
+        # one and falls back to the base vector.
+        return base
+    return None
+
+
+def reclass(value:genType, target:Optional[type])->genType:
+    """``value`` wearing ``target``'s class, when the two share a base vector.
+
+    The comparison is on the *base*, not on the class: `point3f` and `vector3f` are both a
+    `float3`, so reclassing one to the other is legitimate even though neither is a subclass
+    of the other.
+    """
+    if target is None or type(value) is target:
+        return value
+    if base_of(target) is not base_of(type(value)):
+        return value
+    return target(*[value[i] for i in range(value._slot_count())])
+
+
+def base_of(cls:type)->Optional[type]:
+    """``cls`` itself when it is a base vector, else the base vector it is an alias of."""
+    return _ALIAS_BASES.get(cls, cls)
+
+
+def direction_alias(base:Optional[type])->Optional[type]:
+    """The alias a displacement of ``base`` wears, when the package publishes one."""
+    return _alias_for(base, DISPLACEMENT_ROLE) if base is not None else None
+
+
+def is_direction(value:Any)->bool:
+    """Whether ``value`` is a direction: the base vector, or a direction alias."""
+    if not isinstance(value, genType):
+        return False
+    role:Optional[str] = _ALIAS_ROLES.get(type(value))
+    return role is None or role in (DIRECTION_ROLE, DISPLACEMENT_ROLE)
+
+
 class genType:
 
     __type_order:List[type] = [
@@ -247,6 +385,12 @@ class genType:
 
         result_dtype:type = genType._bin_op_dtype(operator, value1_dtype, value2_dtype, second_has_negative)
         result_type:type = genType.gen_type(cast(MathForm, math_form), result_dtype, shape)
+        # Keep the *meaning* the operands had: a position minus a position is a displacement,
+        # a position plus a displacement is a position. When the arithmetic is meaningless the
+        # alias table raises instead of returning a number that would claim a meaning.
+        alias:Optional[type] = _alias_result_type(operator, value1, value2, result_type)
+        if alias is not None:
+            result_type = alias
         return result_type
 
     def __neg__(self)->genType:

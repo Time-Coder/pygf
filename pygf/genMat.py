@@ -5,7 +5,7 @@ from collections.abc import Callable
 from typing import Any, Tuple, Union, cast
 from typing_extensions import TypeAlias
 
-from .genType import MathForm, _equal_leaves, genType
+from .genType import MathForm, _equal_leaves, genType, reclass
 from .genVec import VecType, genVec
 from .helper import is_number
 
@@ -205,6 +205,11 @@ class genMat(genType, ctypes.Array):
                         value += self[i, k] * other[k]
 
                     result[i] = value
+
+                # A matrix times a vector is a vector of the same kind as the one it was
+                # handed: transforming a position gives a position, a direction gives a
+                # direction. gen_type above can only name the base vector.
+                return cast(genVec, reclass(result, type(other)))
 
             return result
 

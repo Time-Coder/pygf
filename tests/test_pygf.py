@@ -85,7 +85,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import pygf
 from pygf import funcs
 from pygf.bool3 import bool3
-from pygf.alias import color3f
+from pygf.alias import color3f, normal3f, point3f, texCoord3f, vector3f
 from pygf.double3 import double3
 from pygf.float2 import float2
 from pygf.float3 import float3
@@ -601,6 +601,80 @@ check("luminance of white", round(cast(float, funcs.luminance(color3f(1, 1, 1)))
 check("luminance of red", round(cast(float, funcs.luminance(color3f(1, 0, 0))), 6), 0.272229)
 check("vec3 alias is float3", pygf.vec3 is float3, True)
 check("matrix33 alias is matrix3f", pygf.matrix33 is matrix3f, True)
+
+# --- arithmetic keeps the meaning an alias carries, not only the numbers -------------------
+# A position and a displacement live in the same three floats, so the result type is the only
+# record of which one an expression means. Subtracting two positions gives a displacement,
+# adding a displacement to a position gives a position, and adding two positions is not a
+# position at all -- it used to answer a plain float3 and silently drop the distinction.
+_P = point3f(1.0, 2.0, 3.0)
+_V = float3(1.0, 1.0, 1.0)
+check("position - position is a vector", type(_P - _P).__name__, "vector3f")
+check("position + vector is a position", type(_P + _V).__name__, "point3f")
+check("vector + position is a position", type(_V + _P).__name__, "point3f")
+check("position - vector is a position", type(_P - _V).__name__, "point3f")
+check("scaling a position keeps it a position", type(2.0 * _P).__name__, "point3f")
+check("dividing a position keeps it a position", type(_P / 2.0).__name__, "point3f")
+check("negating a position keeps it a position", type(-_P).__name__, "point3f")
+check("a displacement plus a position is a position",
+      type((_P - _P) + _P).__name__, "point3f")
+check("a plain vector stays a plain vector", type(_V + _V).__name__, "float3")
+check("a named vector keeps its name",
+      type(vector3f(1.0, 0.0, 0.0) + vector3f(1.0, 0.0, 0.0)).__name__, "vector3f")
+check("adding two colours stays a colour",
+      type(color3f(0.5, 0.5, 0.5) + color3f(0.5, 0.5, 0.5)).__name__, "color3f")
+check("a colour times a colour stays a colour",
+      tuple(cast(color3f, color3f(0.5, 0.5, 0.5) * color3f(0.5, 0.5, 0.5))), (0.25, 0.25, 0.25))
+check("scaling a normal keeps it a normal", type(normal3f(1.0, 0.0, 0.0) * 2.0).__name__, "normal3f")
+# A meaningless combination is still a number: it keeps the name the two operands share, and
+# otherwise falls back to the base vector. Nothing is refused.
+check("two positions add to a position", type(_P + _P).__name__, "point3f")
+check("a vector minus a position is a plain vector", type(_V - _P).__name__, "float3")
+check("a position multiplied by a position stays a position",
+      type(_P * _P).__name__, "point3f")
+check("a position multiplied by a vector is a plain vector",
+      type(_P * _V).__name__, "float3")
+check("a colour plus a texcoord is a plain vector",
+      type(color3f(0.5, 0.5, 0.5) + texCoord3f(1.0, 2.0, 3.0)).__name__, "float3")
+# A matrix times a vector is a vector of the same kind it was handed: transforming a position
+# gives a position, a direction gives a direction. The result type used to be the base vector.
+_M3 = matrix3f()
+for _r in range(3):
+    for _c in range(3):
+        _M3.put(_r, _c, 1.0 if _r == _c else 0.0)
+check("matrix3f * float3 is a float3", type(_M3 * float3(1.0, 2.0, 3.0)).__name__, "float3")
+check("matrix3f * point3f is a point3f", type(_M3 * point3f(1.0, 2.0, 3.0)).__name__, "point3f")
+check("matrix3f * vector3f is a vector3f", type(_M3 * vector3f(1.0, 2.0, 3.0)).__name__, "vector3f")
+check("matrix3f * normal3f is a normal3f", type(_M3 * normal3f(1.0, 2.0, 3.0)).__name__, "normal3f")
+check("the matrix-vector product keeps its value",
+      tuple(cast(point3f, _M3 * point3f(1.0, 2.0, 3.0))), (1.0, 2.0, 3.0))
+check("matrix3f * matrix3f stays a matrix", type(_M3 * _M3).__name__, "matrix3f")
+check("transformvector keeps the position name",
+      type(funcs.transformvector(point3f(1.0, 2.0, 3.0), _M3)).__name__, "point3f")
+
+# The geometry functions answer a *direction* whatever they were handed, so a position loses
+# its name and a named direction keeps it.
+check("cross of two directions is a direction",
+      type(funcs.cross(vector3f(1.0, 0.0, 0.0), vector3f(0.0, 1.0, 0.0))).__name__, "vector3f")
+check("cross of two plain vectors is a plain vector",
+      type(funcs.cross(float3(1.0, 0.0, 0.0), float3(0.0, 1.0, 0.0))).__name__, "float3")
+check("cross of two positions keeps the shared name",
+      type(funcs.cross(point3f(1.0, 0.0, 0.0), point3f(0.0, 1.0, 0.0))).__name__, "point3f")
+check("cross of a direction and a plain vector is a direction",
+      type(funcs.cross(vector3f(1.0, 0.0, 0.0), float3(0.0, 1.0, 0.0))).__name__, "vector3f")
+check("normalize of a position is a direction",
+      type(funcs.normalize(point3f(3.0, 0.0, 0.0))).__name__, "vector3f")
+check("normalize of a named direction keeps the name",
+      type(funcs.normalize(vector3f(3.0, 0.0, 0.0))).__name__, "vector3f")
+check("normalize of a colour is a plain vector",
+      type(funcs.normalize(color3f(3.0, 0.0, 0.0))).__name__, "float3")
+check("reflect of a direction is a direction",
+      type(funcs.reflect(vector3f(1.0, 0.0, 0.0), normal3f(0.0, 1.0, 0.0))).__name__, "vector3f")
+check("faceforward keeps the normal name",
+      type(funcs.faceforward(normal3f(0.0, 1.0, 0.0), vector3f(1.0, 0.0, 0.0),
+                             normal3f(0.0, 1.0, 0.0))).__name__, "normal3f")
+check("the position minus position value is the offset",
+      tuple(cast(vector3f, point3f(4.0, 6.0, 8.0) - _P)), (3.0, 4.0, 5.0))
 
 _m = matrix3f()
 for _r in range(3):

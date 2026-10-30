@@ -102,6 +102,33 @@ not always catch.
   delegates to `mod`; `math.fmod` would answer a different question. Same
   reasoning as `magnitude`/`length`: a distinct spelling so a transpiler can
   map it without a rename table.
+- **Arithmetic keeps the *meaning* an alias carries, not only the numbers.** `point3f`,
+  `vector3f`, `normal3f`, `color3f` and `texCoord3f` are all a `float3` with the same dtype,
+  so the result type is the only record of whether an expression is a position or an offset.
+  `alias.py` registers each alias with its base and a role through
+  `genType.register_alias_role`, and `_alias_result_type` (called from `_bin_op_type`, the one
+  place that decides a result type) applies three rules, in this order:
+  (1) *a result with a mathematical meaning takes the type the meaning calls for* --
+  `position - position` is a `vector3f`, `position ± direction` is a `point3f`;
+  (2) *a scalar broadcast scales or offsets a meaning without changing it* -- `2 * point` and
+  `point / 2` stay a `point3f`;
+  (3) *a combination with no meaning is still a number*: when both operands are the same type
+  the result keeps that type (`position + position` is a `point3f`, `colour * colour` is a
+  `color3f`), and when they are different types it falls back to the base vector
+  (`vector - position`, `point * vector`, `colour + texCoord` are all a `float3`).
+  **Nothing here raises.** A plain `float3` counts as a direction, so `float3 + float3` answers
+  a `float3`; the operand's own class wins when both sides are that same alias
+  (`vector3f + vector3f` is a `vector3f`). Do not register two aliases with the same (base,
+  role) pair and expect the second to be chosen -- the lookup keeps the first, which is why the
+  same-class rule exists.
+- **`cross`, `normalize`, `reflect`, `refract` and `faceforward` answer a direction**, which
+  the arithmetic alone cannot know: `I - N` mixes two aliases and would fall back to the base
+  vector. They reclass the result through `genType.reclass` with `direction_result_class` (the
+  operand keeps its name when it already is a direction, a position becomes the `vector3f`
+  displacement alias, a colour falls back to the base), because a unit-length *position* is not
+  a position. `cross` is special-cased: identical operands keep their shared name
+  (`cross(float3, float3)` is a `float3`, `cross(point3f, point3f)` a `point3f`), otherwise two
+  directions give a `vector3f`.
 - **`isnan` / `isinf` / `isfinite` answer a `bool` container, not a float
   one.** GLSL declares `bvec`, and a ctypes float slot stores `True` as
   `1.0` -- so routing them through `_single_op` would return a `float3` and

@@ -8,7 +8,13 @@ from typing import Any, List, Union, cast
 
 from .genMat import genMat
 from .genQuat import genQuat
-from .genType import genType
+from .genType import (
+    direction_alias,
+    direction_result_class,
+    genType,
+    is_direction,
+    reclass,
+)
 from .genVec import genVec
 from .genVec3 import genVec3
 from .helper import Number, is_number
@@ -361,7 +367,10 @@ def normalize(x:Union[genType, Number])->Union[genType, float]:
     # Through _bin_op rather than `x / length(x)`: length() returns a plain float
     # for a scalar input, and `/` between a genType and a float is what the
     # operator path handles.
-    return _bin_op(x, length(x), _div, "/")
+    #
+    # The result is a direction whatever came in: a unit-length *position* is not a position,
+    # so keeping its name would claim something false.
+    return reclass(_bin_op(x, length(x), _div, "/"), direction_result_class(x))
 
 def distance(x: genType, y: genType)->float:
     return length(x - y)
@@ -385,13 +394,28 @@ def cross(x: genVec3, y: genVec3)->genVec3:
 
     result_dtype:type = ctypes.c_double if (x.dtype == ctypes.c_double or y.dtype == ctypes.c_double) else ctypes.c_float
     result_type:type = genVec.vec_type(result_dtype, 3)
-    return result_type(x.y * y.z - x.z * y.y, x.z * y.x - x.x * y.z, x.x * y.y - x.y * y.x)
+    product = result_type(x.y * y.z - x.z * y.y, x.z * y.x - x.x * y.z, x.x * y.y - x.y * y.x)
+    # A cross product of two directions is a direction, which is what `vector3f` names. When
+    # neither operand is a direction the result has no meaning, so it keeps the name the two
+    # operands share and otherwise stays the base vector.
+    return cast(genVec3, reclass(product, _cross_result_class(x, y, result_type)))
+
+
+def _cross_result_class(x:Any, y:Any, result_base:type)->Any:
+    if type(x) is type(y):
+        return None if type(x) is result_base else type(x)
+    if is_direction(x) and is_direction(y):
+        return direction_alias(result_base)
+    return None
 
 def reflect(I:genVec, N:genVec)->genType:  # noqa: E741 - GLSL spells the incident vector `I`
-    return I - 2 * dot(I, N) * N
+    # A reflected direction is still a direction, so it takes the class the incident vector
+    # had; the arithmetic alone drops it, because `I - N` mixes two different aliases.
+    return reclass(I - 2 * dot(I, N) * N, direction_result_class(I))
 
 def refract(I:genVec, N:genVec, eta:float)->genType:  # noqa: E741 - GLSL spells the incident vector `I`
-    return I - (eta * dot(I, N) + math.sqrt(1 - eta * eta * (1 - dot(I, N) * dot(I, N)))) * N
+    return reclass(I - (eta * dot(I, N) + math.sqrt(1 - eta * eta * (1 - dot(I, N) * dot(I, N)))) * N,
+                   direction_result_class(I))
 
 def faceforward(N:genVec, I:genVec, Nref:genVec)->genType:  # noqa: E741 - GLSL spells the incident vector `I`
     return (N if dot(Nref, I) < 0 else -N)
