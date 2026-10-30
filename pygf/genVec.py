@@ -249,11 +249,19 @@ class genVec(genType, ctypes.Structure):
             update_indices.append(index)
         self._update_data(update_indices)
 
-    def __getitem__(self, index:Union[int, slice])->Union[float,int,bool,genVec]:
+    def __getitem__(self, index:Union[int, slice, str])->Union[float,int,bool,genVec]:
+        # A component may also be named, which is the spelling a structure member uses:
+        # `v["x"]` reads the same thing `v.x` and `v[0]` do. Device code that indexes a
+        # structure (`s["v"]["x"]`) then runs unchanged in plain python.
+        if isinstance(index, str):
+            return getattr(self, index)
         attr_name:str = 'xyzw'[index]
         return getattr(self, attr_name)
 
-    def __setitem__(self, index:Union[int,slice], value:Union[float,int,bool,genVec])->None:
+    def __setitem__(self, index:Union[int,slice,str], value:Union[float,int,bool,genVec])->None:
+        if isinstance(index, str):
+            setattr(self, index, value)
+            return
         attr_name:str = 'xyzw'[index]
         setattr(self, attr_name, value)
 
