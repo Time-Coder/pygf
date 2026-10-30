@@ -548,9 +548,17 @@ def greaterThanEqual(x:genType, y:genType)->genType:
     return x >= y
 
 def equal(x:genType, y:genType)->genType:
+    # A scalar pair has no vector to return, so it answers a plain bool -- which is what the
+    # operator-based siblings (lessThan, greaterThan, ...) already do, and what a caller
+    # comparing two numbers expects. Going through `_compare_op` unconditionally raised
+    # AttributeError on a float, leaving `equal` less capable than `lessThan` for no reason.
+    if not isinstance(x, genType):
+        return x == y
     return x._compare_op("==", y)
 
 def notEqual(x:genType, y:genType)->genType:
+    if not isinstance(x, genType):
+        return x != y
     return x._compare_op("!=", y)
 
 def _slot_truth(x:genType)->List[bool]:
