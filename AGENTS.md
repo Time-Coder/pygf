@@ -8,8 +8,9 @@ PyRHI can all depend on the same numeric types without depending on each other.
 
 - `pygf/` is the package: the type hierarchy (`genType`, `genVec`, `genMat`,
   `genQuat` and their width-specific subclasses), `funcs.py` for the
-  GLSL-shaped function set, `half.py` for binary16 conversion, and `helper.py` for
-  the pieces the rest of the package shares.
+  GLSL-shaped function set, `half.py` for binary16 conversion, `helper.py` for
+  the pieces the rest of the package shares, and `vector_array.py` for the numpy
+  boundary (the `VectorArray` view and the constructor patches that produce it).
 - `tests/test_pygf.py` is the test suite. It imports stdlib and `pygf` and nothing
   else -- no test fixtures, no other project -- so it stays runnable here
   independently of whatever depends on the package.
@@ -129,6 +130,23 @@ not always catch.
   `np.array(matrix3d())` from an `IndexError` into a `(3, 3)` array; and a half
   stores bit patterns in private fields, so the component names must be mapped back
   to the public ones or numpy is handed the bit patterns.
+- **An array of vectors is not a block of numbers.** `np.dtype(cls._fields_)`
+  describes a vector, so an array of them is a structured array -- whose elements are
+  `np.void` records, where `.x` does not exist and `arr[i] = float3(...)` is rejected
+  because numpy cannot read a ctypes structure as a sequence. `vector_array.py` owns
+  that whole boundary: `VectorArray` is the view whose elements are vectors,
+  `install_vector_array_patches` (called from `__init__` after `patch_nparray`) gives
+  the constructors and `np.asarray` that view, and `patch_nparray` delegates a list of
+  vector instances to it so `np.array([float3(...), float3(...)])` is two vectors
+  rather than a flattened `(2, 3)` float matrix. Three things are load-bearing: the
+  registry must be built from the `genVec` hierarchy *before* any outside type is
+  registered (`_ensure_registry`), or a sibling package registering first hides the
+  package's own types; the type lookup is duck-typed (`_fields_` plus `numpy_dtype`) so
+  a package with wider vectors can join through `register_vector_type`; and a mixed
+  list stays numpy's own verdict, because there is no honest record to fill.
+- **The dtype may be spelled positionally.** `np.array(obj, dtype)` is as valid as
+  the keyword form, and reading only the keyword silently sent an explicit dtype down
+  the flattening path, producing a `(2, 3)` grid of records instead of two.
 - **The swizzle block is generated, and the generator is the only writer.**
   `tools/sync_swizzle_blocks.py` rewrites the whole fenced region every run, so
   hand-editing inside the markers is lost. Four things about it are load-bearing:

@@ -197,6 +197,9 @@ __all__ = [
     "matrixCompMult", "outerProduct", "lessThan", "lessThanEqual",
     "greaterThan", "greaterThanEqual", "equal", "notEqual", "any", "all", "not_", "sizeof", "isnan", "isinf", "isfinite",
     "dFdx", "dFdy", "fwidth", "textureSize",
+    # The array view and the registry behind it: a sibling package with wider vector types
+    # registers them so its arrays get the same element access.
+    "VectorArray", "wrap_vector_array", "register_vector_type", "vector_class_for_dtype",
 ]
 
 # GLSL spelling aliases. These are the same classes under the name a shader
@@ -208,3 +211,16 @@ matrix33 = matrix3f
 matrix44 = matrix4f
 
 patch_nparray()
+
+# The constructors beside numpy.array, so a vector-dtype array is born as the view whose
+# elements are vectors (see vector_array). Installing here keeps the whole numpy surface in
+# one place: a caller imports pygf and the types behave the same way everywhere.
+from .vector_array import (  # noqa: E402  (must follow patch_nparray)
+    VectorArray,
+    install_vector_array_patches,
+    register_vector_type,
+    vector_class_for_dtype,
+    wrap_vector_array,
+)
+
+install_vector_array_patches()

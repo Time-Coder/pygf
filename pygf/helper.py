@@ -216,8 +216,15 @@ def patch_nparray():
     become keyed records instead of flattened floats, so numpy builds the correct
     structured array: ``np.array([float4(1,2,3,4), float4(5,6,7,8)],
     dtype=float4.numpy_dtype())`` yields two (x, y, z, w) records, not a
-    transposed 2x4 grid. Without a structured dtype the flatten behaviour is
-    unchanged.
+    transposed 2x4 grid.
+
+    A list of vectors is an array of vectors whether or not the dtype is spelled
+    out, so that case is delegated to ``vector_array``: it infers the dtype and
+    fills the records directly, and what comes back is a ``VectorArray`` whose
+    elements are vectors rather than records. The dtype is read positionally as
+    well as by keyword, because numpy accepts both and reading only the keyword
+    used to send an explicit dtype down the flattening path. The flatten
+    behaviour for everything else is unchanged.
     """
     if np.array.__module__ != "numpy":
         return
@@ -226,7 +233,21 @@ def patch_nparray():
 
     def array(*args, **kwargs):
         obj = args[0] if args else None
+        # numpy accepts the dtype positionally as well as by keyword, and a caller who wants
+        # an array of records writes it either way; reading only the keyword silently took
+        # the flattening path below and produced a transposed grid of records.
         dtype = kwargs.get("dtype")
+        if dtype is None and len(args) > 1:
+            dtype = args[1]
+
+        # A list of vectors is an array of vectors, not the block of components that
+        # flattening would build; vector_array owns that distinction and the view it returns.
+        if isinstance(obj, (list, tuple)):
+            from .vector_array import _sequence_dtype_from_array
+
+            dtype, built = _sequence_dtype_from_array(obj, dtype)
+            if built is not None:
+                return built
 
         if dtype is not None and getattr(dtype, "fields", None) is not None:
             if _is_container(obj):
@@ -239,9 +260,20 @@ def patch_nparray():
             return np_array(_flatten(obj), *args[1:], **kwargs)
 
         if isinstance(obj, (list, tuple)) and any(_is_container(ele) for ele in obj):
-            return np_array([_flatten(ele) for ele in obj], *args[1:], **kwargs)
+            # Only a container is flattened: passing everything else through unchanged leaves
+            # a mixed list to numpy, which reports the shape mismatch it actually is.
+            return np_array(
+                [_flatten(ele) if _is_container(ele) else ele for ele in obj],
+                *args[1:],
+                **kwargs,
+            )
 
-        return np_array(*args, **kwargs)
+        result = np_array(*args, **kwargs)
+        if isinstance(obj, (list, tuple)):
+            from .vector_array import wrap_vector_array
+
+            return wrap_vector_array(result)
+        return result
 
     # numpy types array as an attribute but the stub describes it as a set of
     # overloads, so a checker cannot see that swapping in a replacement function

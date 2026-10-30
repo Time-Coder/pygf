@@ -469,7 +469,49 @@ check("np.array of a vector is its components", np.array(double3(1, 2, 3)), [1.0
 check("np.array of a vector shape", np.array(double3(1, 2, 3)).shape, (3,))
 check("np.array of a matrix keeps its shape", np.array(matrix3d(0.0)).shape, (3, 3))
 check("np.array of a matrix4d keeps its shape", np.array(matrix4d(0.0)).shape, (4, 4))
-check("np.array of a list of vectors", np.array([double3(1, 2, 3)]).shape, (1, 3))
+# A list of vectors is an array of vectors, not the block of components that flattening
+# would build: the dtype says every element is a record, so the first axis counts vectors.
+check("np.array of a list of vectors", np.array([double3(1, 2, 3), double3(4, 5, 6)]).shape, (2,))
+check(
+    "np.array of a list of vectors keeps its dtype",
+    np.array([double3(1, 2, 3)]).dtype.itemsize,
+    24,
+)
+check("a vector array element is a vector", np.array([double3(1, 2, 3)])[0].z, 3.0)
+check(
+    "a nested list of vectors keeps its shape",
+    np.array([[double3(0, 0, 0)], [double3(1, 1, 1)]]).shape,
+    (2, 1),
+)
+# The dtype may be spelled out either way. Reading only the keyword used to send an
+# explicit dtype down the flattening path and give a (2, 3) grid of records.
+check(
+    "np.array with a positional dtype",
+    np.array([double3(1, 2, 3)], double3.numpy_dtype()).shape,
+    (1,),
+)
+check(
+    "np.array with a keyword dtype",
+    np.array([double3(1, 2, 3)], dtype=double3.numpy_dtype()).shape,
+    (1,),
+)
+# A mixed list is not an array of vectors, and it has no rectangular shape either: numpy's
+# own verdict is the useful one, so the patch passes the non-container element through.
+try:
+    np.array([double3(1, 2, 3), 1.0])
+    _mixed_verdict = "accepted"
+except ValueError:
+    _mixed_verdict = "ValueError"
+check("np.array of a mixed list is numpy's verdict", _mixed_verdict, "ValueError")
+
+# The constructors produce the same view, so an array of vectors can be written element by
+# element with the types the caller has in hand.
+scratch = np.zeros(2, dtype=double3.numpy_dtype())
+scratch[0] = double3(1.0, 2.0, 3.0)
+check("np.zeros gives a vector array", scratch.shape, (2,))
+check("writing a vector into the array", scratch[0].z, 3.0)
+check("np.asarray infers the dtype", np.asarray([double3(1, 2, 3)]).shape, (1,))
+check("np.ones keeps the width", np.ones(2, dtype=pygf.float4.dtype).dtype.itemsize, 16)
 # A half field is a uint16 bit pattern, so the patch has to decode it rather
 # than hand numpy the raw integer.
 check("np.array of a half vector", np.array(half3(1.0, 2.0, 3.0)), [1.0, 2.0, 3.0])
