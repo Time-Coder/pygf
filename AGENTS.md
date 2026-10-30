@@ -147,6 +147,15 @@ not always catch.
 - **The dtype may be spelled positionally.** `np.array(obj, dtype)` is as valid as
   the keyword form, and reading only the keyword silently sent an explicit dtype down
   the flattening path, producing a `(2, 3)` grid of records instead of two.
+- **`isalignedstruct` is what separates a vector from a caller's structure.** `np.dtype`
+  over a `ctypes.Structure` produces an *aligned* record, and a `{float x; float y;}`
+  compares equal to `float2` and hashes the same -- a dtype-keyed lookup cannot tell
+  them apart. The vector dtypes here are built with `np.dtype(cls._fields_)` and are
+  not aligned, so `vector_class_for_dtype` returns None for an aligned record. Without
+  that test, an array of someone's two-float structure wrapped itself in the
+  `VectorArray` view and its elements came back as `float2`, so `arr[i]["y"]` raised
+  `TypeError: string indices must be integers`. Never "optimize" this back into a plain
+  `_VECTOR_TYPES.get(dtype)`; PyGPGPU applies the mirror rule on its side.
 - **The swizzle block is generated, and the generator is the only writer.**
   `tools/sync_swizzle_blocks.py` rewrites the whole fenced region every run, so
   hand-editing inside the markers is lost. Four things about it are load-bearing:

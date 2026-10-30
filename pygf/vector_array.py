@@ -55,6 +55,9 @@ def register_vector_type(cls: Type[Any]) -> None:
     if not fields:
         return
     try:
+        # Built exactly like the vector dtypes are, so it is *not* an aligned record: that
+        # alignment flag is what tells a caller's `ctypes.Structure` apart from a vector
+        # whose layout matches it.
         dtype = np.dtype(fields)
     except TypeError:
         return
@@ -91,9 +94,18 @@ def _ensure_registry() -> None:
 
 
 def vector_class_for_dtype(dtype: Any) -> Optional[Type[Any]]:
-    """The vector class an array dtype denotes, or None."""
+    """The vector class an array dtype denotes, or None.
+
+    An *aligned* record is not one of ours: `np.dtype` over a `ctypes.Structure` produces an
+    aligned layout, so a caller's `{float x; float y;}` compares equal to `float2` while
+    being a structure they declared. The vector dtypes this package ships are built with
+    ``np.dtype(cls._fields_)`` and are not aligned, which is the only thing that separates
+    the two -- they compare and hash equal.
+    """
     _ensure_registry()
     if not isinstance(dtype, np.dtype) or dtype.fields is None:
+        return None
+    if dtype.isalignedstruct:
         return None
     return _VECTOR_TYPES.get(dtype)
 
