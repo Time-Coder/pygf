@@ -11,6 +11,7 @@ version in pyproject.toml first; re-uploading a version that already exists need
 `-u`, which this does not pass.
 """
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -54,7 +55,15 @@ def main() -> int:
 
     # `-u` replaces an existing release, which is what a fix to a published
     # version needs; PyPI rejects a second upload of the same filename otherwise.
-    subprocess.check_call([sys.executable, "-m", "twine", "upload", *artifacts, "--verbose"])
+    #
+    # twine draws its progress bar with `rich`, which writes to the Windows console with
+    # the *console's* code page: on a GBK console the bullet in its progress line raised
+    # UnicodeEncodeError and the upload died at 0%, with nothing registered -- the release
+    # went out only after setting PYTHONIOENCODING by hand. The child gets UTF-8 stdio of
+    # its own, so publishing never depends on the caller's code page.
+    environment = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
+    subprocess.check_call([sys.executable, "-m", "twine", "upload", *artifacts, "--verbose"],
+                          env=environment)
 
     return 0
 
