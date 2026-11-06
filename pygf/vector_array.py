@@ -291,8 +291,17 @@ def _patched_asarray(original: Any) -> Any:
             built: Any = _from_vector_sequence(obj, inferred)
             if built is not None:
                 return built
-        if dtype is None and inferred is not None:
-            kwargs.setdefault("dtype", inferred)
+        if dtype is None:
+            dtype = inferred
+        if dtype is not None:
+            # The wrapper exists to add a *view*, never to change what numpy was asked for,
+            # and `dtype` was read here and then never handed on: an explicit dtype was
+            # silently dropped, so ``np.asarray(1 + 2j, dtype=np.complex64)`` came back
+            # complex128. It travels in its own positional slot (the second parameter of
+            # ``np.asarray``), not as a keyword: when the caller spells it positionally the
+            # second slot already holds it, and ``args`` may hold the third (`order`), so a
+            # keyword would pass the same parameter twice.
+            args = (dtype,) + args
         return wrap_vector_array(original(obj, *args, **kwargs))
 
     patched.__name__ = "asarray"

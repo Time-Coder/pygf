@@ -174,6 +174,15 @@ not always catch.
 - **The dtype may be spelled positionally.** `np.array(obj, dtype)` is as valid as
   the keyword form, and reading only the keyword silently sent an explicit dtype down
   the flattening path, producing a `(2, 3)` grid of records instead of two.
+- **`np.asarray` hands the dtype on, in its own positional slot.** The patch exists to
+  add a view, never to change what numpy was asked for; reading `dtype` as a parameter
+  of the wrapper and never forwarding it dropped an explicit dtype
+  (`np.asarray(1 + 2j, dtype=np.complex64)` answered complex128) for every caller in
+  every package that imports this one. It is forwarded positionally because the caller
+  may spell it that way and `args` may hold the third parameter (`order`), so a
+  keyword would pass the same argument twice. An explicit dtype that is *not* the
+  vector's is therefore numpy's verdict -- a refusal -- where `np.array`'s separate
+  rewrite flattens a list of vectors into a grid; the two patches are kept apart.
 - **`isalignedstruct` is what separates a vector from a caller's structure.** `np.dtype`
   over a `ctypes.Structure` produces an *aligned* record, and a `{float x; float y;}`
   compares equal to `float2` and hashes the same -- a dtype-keyed lookup cannot tell

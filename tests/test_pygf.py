@@ -61,6 +61,10 @@ the package could be published, because a shared dependency freezes its API):
   * patch_nparray replaced numpy.array globally and rewrote matrix rows into
     0-dimensional structured arrays, so np.array(matrix3d()) raised IndexError
     where unpatched numpy returns a flat (9,) array.
+  * The np.asarray patch read the dtype as a parameter of its own and never handed
+    it to numpy, so an explicit dtype was silently dropped:
+    np.asarray(1 + 2j, dtype=np.complex64) answered complex128. The view is the
+    patch's whole job; the dtype is numpy's.
   * gen_type could not build a uint vector: 'uint' was in the dtype name map
     but no uint2/3/4 modules existed.
   * half2/3/4 were float2/3/4 subclasses with c_float fields, so there was no
@@ -521,6 +525,45 @@ scratch[0] = double3(1.0, 2.0, 3.0)
 check("np.zeros gives a vector array", scratch.shape, (2,))
 check("writing a vector into the array", scratch[0].z, 3.0)
 check("np.asarray infers the dtype", np.asarray([double3(1, 2, 3)]).shape, (1,))
+# The asarray patch exists to add a view, not to change what numpy was asked for. It read
+# the dtype as a parameter of its own and never handed it on, so an explicit dtype was
+# dropped -- `np.asarray(1 + 2j, dtype=np.complex64)` answered a complex128 -- and every
+# caller inside a package that imports pygf inherited that.
+check(
+    "np.asarray honours a keyword dtype",
+    np.asarray([1 + 2j], dtype=np.complex64).dtype.name,
+    "complex64",
+)
+check(
+    "np.asarray honours a positional dtype",
+    np.asarray([1 + 2j], np.complex64).dtype.name,
+    "complex64",
+)
+check(
+    "np.asarray still infers a vector dtype",
+    np.asarray([double3(1, 2, 3)]).dtype,
+    double3.numpy_dtype(),
+)
+# An explicit dtype that is not the vector's is numpy's own verdict, which is what the
+# patch promises: numpy refuses to build a float array out of a sequence-like element, and
+# the old wrapper only got a (1, 3) array there by dropping the dtype on the floor.
+try:
+    np.asarray([double3(1, 2, 3)], dtype=np.float64)
+    _explicit_dtype_verdict = "accepted"
+except (TypeError, ValueError):
+    _explicit_dtype_verdict = "refused"
+check(
+    "np.asarray leaves an explicit non-vector dtype to numpy",
+    _explicit_dtype_verdict,
+    "refused",
+)
+# `np.array` is a different patch with its own rewrite: it flattens vectors into their
+# components, so the same call answers a grid. The two are kept apart on purpose.
+check(
+    "np.array flattens vectors under an explicit scalar dtype",
+    np.array([double3(1, 2, 3)], dtype=np.float64).shape,
+    (1, 3),
+)
 check("np.ones keeps the width", np.ones(2, dtype=pygf.float4.dtype).dtype.itemsize, 16)
 # A half field is a uint16 bit pattern, so the patch has to decode it rather
 # than hand numpy the raw integer.
