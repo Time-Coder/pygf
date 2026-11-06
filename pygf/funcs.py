@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import builtins
+import cmath
 import ctypes
 import math
 from collections.abc import Callable
-from typing import Any, List, Union, cast
+from typing import Any, List, Tuple, Union, cast
 
 from .genMat import genMat
 from .genQuat import genQuat
@@ -33,11 +34,94 @@ def _div(x:Any, y:Any)->Any:
     return x / y
 
 
+def _is_scalar_complex(value:Any)->bool:
+    """Whether a bare value is a complex scalar.
+
+    A container slot cannot hold one -- a genType is a ctypes float field -- so the
+    element-wise helpers stop at a bare complex and answer a bare complex, which is
+    what numpy answers for the same call (`np.sqrt(np.complex64(1+2j))` is a
+    `complex64`, not a container).
+    """
+    return isinstance(value, complex) or value.__class__.__name__ in (
+        'complex64', 'complex128')
+
+
+def _hypot_of(a:Any, b:Any)->Any:
+    """`hypot` for one pair of scalars: real on both is math's, complex is refused.
+
+    numpy has no complex `hypot` -- the operation is the modulus of the difference --
+    so a complex operand raises here exactly as it does there.
+    """
+    if _is_scalar_complex(a) or _is_scalar_complex(b):
+        raise TypeError(
+            "hypot has no complex meaning: use abs(a - b) for the distance between"
+            " two complex numbers")
+    return math.hypot(a, b)
+
+
+def _complex_parts(value:Any)->Tuple[float, float]:
+    """A complex scalar's two parts, as python floats.
+
+    Going through `complex()` first is what lets a numpy `complex64` give the narrow
+    value it holds, and `float()` on each part is the same reading the rest of this
+    module gives a `float32`.
+    """
+    number:complex = complex(value)
+    return float(number.real), float(number.imag)
+
+
+def _complex_order_key(value:Any)->Tuple[float, float]:
+    """The key numpy orders complex values by: the real part, then the imaginary one.
+
+    `np.minimum`, `np.maximum` and `np.clip` are defined on complex values, and their
+    order is lexicographic: `min(1+2j, 1-1j)` is `1-1j`, and `clip(1+2j, 0, 1)` is
+    `1+0j` -- the imaginary part only decides once the real parts are equal.
+    """
+    return _complex_parts(value)
+
+
+def _complex_minmax(a:Any, b:Any, smaller:bool)->Any:
+    """`min`/`max` for one pair of scalars, in numpy's complex order when one is complex.
+
+    Without a complex operand this is exactly the builtin, so nothing about the real
+    path changes -- including the NaN behaviour a comparison-based version would alter.
+    """
+    if not (_is_scalar_complex(a) or _is_scalar_complex(b)):
+        return builtins.min(a, b) if smaller else builtins.max(a, b)
+    left:complex = complex(a)
+    right:complex = complex(b)
+    if _complex_order_key(left) == _complex_order_key(right):
+        return left
+    return left if ((_complex_order_key(left) < _complex_order_key(right)) == smaller) \
+        else right
+
+
+def _either_part(value:Any, predicate:Callable[[float], bool])->bool:
+    """numpy's rule for `isinf` on a complex value: either part answering is enough."""
+    if not _is_scalar_complex(value):
+        return predicate(value)
+    real, imaginary = _complex_parts(value)
+    return predicate(real) or predicate(imaginary)
+
+
+def _both_parts(value:Any, predicate:Callable[[float], bool])->bool:
+    """numpy's rule for `isfinite`: every part of a complex value has to be finite."""
+    if not _is_scalar_complex(value):
+        return predicate(value)
+    real, imaginary = _complex_parts(value)
+    return predicate(real) and predicate(imaginary)
+
+
 def _single_op(x:Any, op:Callable[[Any], Any], op_name:str)->Any:
     """Apply `op` element-wise, descending through rows.
 
     Accepts a bare number as well as a container: `_single_op` is the shared body
     of every unary helper, and GLSL defines all of them for scalars too.
+
+    A bare **complex** scalar is handed to the same `op`, which each caller spells
+    through `cmath` where it has a complex meaning. A container never holds one, so
+    the recursion ends there and the answer is a bare complex -- which is what numpy
+    answers for the same call on a complex scalar.
     """
     if is_number(x):
         return op(x)
@@ -56,7 +140,16 @@ def abs(x:Union[genType, Number])->Union[genType, float]:
 def sign(x:Union[genType, Number])->Union[genType, float]:
     # GLSL: sign(x) is -1, 0 or 1. math.copysign gave 1 at +0.0 and -1 at -0.0,
     # where GLSL returns 0 for both.
-    return _single_op(x, lambda x: 0.0 if x == 0 else math.copysign(1.0, x), "sign")
+    #
+    # A **complex** value answers numpy's sign instead: the direction on the unit circle
+    # (`z / abs(z)`, and 0 for 0). GLSL has no complex value at all, so numpy is the only
+    # authority, and the device's complex path computes this same division.
+    def one(value:Any)->Any:
+        if _is_scalar_complex(value):
+            return 0j if value == 0 else value / builtins.abs(value)
+        return 0.0 if value == 0 else math.copysign(1.0, value)
+
+    return _single_op(x, one, "sign")
 
 def floor(x:Union[genType, Number])->Union[genType, float]:
     return _single_op(x, math.floor, "floor")
@@ -74,8 +167,25 @@ def trunc(x:Union[genType, Number])->Union[genType, float]:
     # TypeError instead of truncating.
     return _single_op(x, lambda x: float(math.trunc(float(x))), "trunc")
 
+def _round_half_away(value:float)->float:
+    """GLSL's round: a halfway case goes away from zero."""
+    return math.floor(value + 0.5) if value >= 0 else math.ceil(value - 0.5)
+
 def round(x:Union[genType, Number])->Union[genType, float]:
-    return _single_op(x, lambda x: math.floor(x + 0.5) if x >= 0 else math.ceil(x - 0.5), "round")
+    """GLSL's `round`, applied to each part of a complex value.
+
+    The two rounding names keep the rules they already have for a real rather than both
+    collapsing into numpy's: `round` goes away from zero at a half, and `roundEven` goes
+    to even (which is `np.round`'s rule). A complex value is two reals, so each part is
+    rounded by that same rule.
+    """
+    def one(value:Any)->Any:
+        if _is_scalar_complex(value):
+            real, imaginary = _complex_parts(value)
+            return complex(_round_half_away(real), _round_half_away(imaginary))
+        return _round_half_away(value)
+
+    return _single_op(x, one, "round")
 
 def _round_even(x:float)->float:
     """Banker's rounding: halfway cases go to the nearest even integer.
@@ -87,7 +197,14 @@ def _round_even(x:float)->float:
     return builtins.round(x)
 
 def roundEven(x:Union[genType, Number])->Union[genType, float]:
-    return _single_op(x, _round_even, "roundEven")
+    """Half-even rounding, per part for a complex value -- `np.round`'s own rule."""
+    def one(value:Any)->Any:
+        if _is_scalar_complex(value):
+            real, imaginary = _complex_parts(value)
+            return complex(_round_even(real), _round_even(imaginary))
+        return _round_even(value)
+
+    return _single_op(x, one, "roundEven")
 
 def fract(x:Union[genType, Number])->Union[genType, float]:
     # GLSL: fract(x) = x - floor(x). Using trunc made fract(-1.5) return -0.5,
@@ -157,14 +274,17 @@ def _assign_slot(target:genType, index:int, value:Any)->None:
     target[index] = value
 
 def min(x:Union[genType, Number], y:Union[genType, Number])->Union[genType, float]:
-    return _bin_op(x, y, builtins.min, "min")
+    """The smaller operand; numpy's lexicographic order when one is complex."""
+    return _bin_op(x, y, lambda a, b: _complex_minmax(a, b, smaller=True), "min")
 
 def max(x:Union[genType, Number], y:Union[genType, Number])->Union[genType, float]:
-    return _bin_op(x, y, builtins.max, "max")
+    """The larger operand; numpy's lexicographic order when one is complex."""
+    return _bin_op(x, y, lambda a, b: _complex_minmax(a, b, smaller=False), "max")
 
 def clamp(x:Union[genType, Number],
           min_value:Union[genType, Number],
           max_value:Union[genType, Number])->Union[genType, float]:
+    """`min(max(x, lo), hi)`, which is numpy's `clip` -- and its order for a complex value."""
     return min(max(x, min_value), max_value)
 
 def mix(x:genType, y:genType, a:Union[genType, Number])->genType:
@@ -243,7 +363,7 @@ def smoothstep(edge0: Union[genType, Number], edge1: Union[genType, Number],
     return _tri_op(edge0, edge1, x, _smoothstep, "smoothstep")
 
 def sqrt(x:Union[genType, Number])->Union[genType, float]:
-    return _single_op(x, math.sqrt, "sqrt")
+    return _single_op(x, lambda v: cmath.sqrt(v) if _is_scalar_complex(v) else math.sqrt(v), "sqrt")
 
 def _inversesqrt(x:float)->float:
     """GLSL inversesqrt on the inputs plain arithmetic refuses.
@@ -254,7 +374,15 @@ def _inversesqrt(x:float)->float:
     matching -- otherwise a kernel that relies on the infinity (a normalising
     reciprocal, say) works on a GPU and raises in the host interpreter. The sign of a
     zero is carried through because `inversesqrt(-0.0)` is negative infinity there.
+
+    A **complex** value is refused with its own message rather than with a `math`
+    TypeError: the operation it stands for (`1 / sqrt(z)`) is well defined, but numpy
+    has no such name and GLSL declares none either, so answering it here would invent a
+    meaning neither side has. The message says what to write instead.
     """
+    if _is_scalar_complex(x):
+        raise TypeError(
+            "inversesqrt has no complex meaning: use 1 / sqrt(z) for a complex value")
     if math.isnan(x):
         return x
     if x == 0.0:
@@ -273,7 +401,13 @@ def _pow(x:float, y:float)->float:
     fractional exponent, which no container slot can hold. GLSL leaves that
     case undefined; NaN is the useful answer, since it propagates the way an
     undefined result does in a shader rather than silently becoming real.
+
+    A **complex** operand is different: python's `**` on two complex numbers
+    is the complex power, which is exactly what numpy computes, so it is
+    handed through unchanged.
     """
+    if _is_scalar_complex(x) or _is_scalar_complex(y):
+        return x ** y
     if x < 0.0 and y != math.floor(y):
         return math.nan
     return float(x ** y)
@@ -283,58 +417,60 @@ def pow(x:Union[genType, Number], y:Union[genType, Number])->Union[genType, floa
     return _bin_op(x, y, _pow, "pow")
 
 def exp(x:Union[genType, Number])->Union[genType, float]:
-    return _single_op(x, math.exp, "exp")
+    return _single_op(x, lambda v: cmath.exp(v) if _is_scalar_complex(v) else math.exp(v), "exp")
 
 def exp2(x:Union[genType, Number])->Union[genType, float]:
-    return _single_op(x, lambda x: 2 ** x, "exp2")
+    return _single_op(x, lambda v: 2 ** v, "exp2")
 
 def exp10(x:Union[genType, Number])->Union[genType, float]:
-    return _single_op(x, lambda x: 10 ** x, "exp10")
+    return _single_op(x, lambda v: 10 ** v, "exp10")
 
 def log(x:Union[genType, Number])->Union[genType, float]:
-    return _single_op(x, math.log, "log")
+    return _single_op(x, lambda v: cmath.log(v) if _is_scalar_complex(v) else math.log(v), "log")
 
 def log2(x:Union[genType, Number])->Union[genType, float]:
-    return _single_op(x, lambda x: math.log(x) / math.log(2), "log2")
+    return _single_op(x, lambda v: (cmath.log(v) / math.log(2)) if _is_scalar_complex(v)
+                      else math.log(v) / math.log(2), "log2")
 
 def log10(x:Union[genType, Number])->Union[genType, float]:
-    return _single_op(x, lambda x: math.log(x) / math.log(10), "log10")
+    return _single_op(x, lambda v: (cmath.log(v) / math.log(10)) if _is_scalar_complex(v)
+                      else math.log(v) / math.log(10), "log10")
 
 def sin(x:Union[genType, Number])->Union[genType, float]:
-    return _single_op(x, math.sin, "sin")
+    return _single_op(x, lambda v: cmath.sin(v) if _is_scalar_complex(v) else math.sin(v), "sin")
 
 def cos(x:Union[genType, Number])->Union[genType, float]:
-    return _single_op(x, math.cos, "cos")
+    return _single_op(x, lambda v: cmath.cos(v) if _is_scalar_complex(v) else math.cos(v), "cos")
 
 def tan(x:Union[genType, Number])->Union[genType, float]:
-    return _single_op(x, math.tan, "tan")
+    return _single_op(x, lambda v: cmath.tan(v) if _is_scalar_complex(v) else math.tan(v), "tan")
 
 def asin(x:Union[genType, Number])->Union[genType, float]:
-    return _single_op(x, math.asin, "asin")
+    return _single_op(x, lambda v: cmath.asin(v) if _is_scalar_complex(v) else math.asin(v), "asin")
 
 def acos(x:Union[genType, Number])->Union[genType, float]:
-    return _single_op(x, math.acos, "acos")
+    return _single_op(x, lambda v: cmath.acos(v) if _is_scalar_complex(v) else math.acos(v), "acos")
 
 def atan(x:Union[genType, Number])->Union[genType, float]:
-    return _single_op(x, math.atan, "atan")
+    return _single_op(x, lambda v: cmath.atan(v) if _is_scalar_complex(v) else math.atan(v), "atan")
 
 def sinh(x:Union[genType, Number])->Union[genType, float]:
-    return _single_op(x, math.sinh, "sinh")
+    return _single_op(x, lambda v: cmath.sinh(v) if _is_scalar_complex(v) else math.sinh(v), "sinh")
 
 def cosh(x:Union[genType, Number])->Union[genType, float]:
-    return _single_op(x, math.cosh, "cosh")
+    return _single_op(x, lambda v: cmath.cosh(v) if _is_scalar_complex(v) else math.cosh(v), "cosh")
 
 def tanh(x:Union[genType, Number])->Union[genType, float]:
-    return _single_op(x, math.tanh, "tanh")
+    return _single_op(x, lambda v: cmath.tanh(v) if _is_scalar_complex(v) else math.tanh(v), "tanh")
 
 def asinh(x:Union[genType, Number])->Union[genType, float]:
-    return _single_op(x, math.asinh, "asinh")
+    return _single_op(x, lambda v: cmath.asinh(v) if _is_scalar_complex(v) else math.asinh(v), "asinh")
 
 def acosh(x:Union[genType, Number])->Union[genType, float]:
-    return _single_op(x, math.acosh, "acosh")
+    return _single_op(x, lambda v: cmath.acosh(v) if _is_scalar_complex(v) else math.acosh(v), "acosh")
 
 def atanh(x:Union[genType, Number])->Union[genType, float]:
-    return _single_op(x, math.atanh, "atanh")
+    return _single_op(x, lambda v: cmath.atanh(v) if _is_scalar_complex(v) else math.atanh(v), "atanh")
 
 def _reject_mat(x:genType, op_name:str)->None:
     """Refuse a genMat for the operations that only make sense on a flat container.
@@ -480,7 +616,16 @@ def trace(m:genMat)->float:
 
     return trace
 
-def conjugate(m:genQuat)->genQuat:
+def conjugate(m:Union[genQuat, complex])->Union[genQuat, complex]:
+    """The conjugate: a quaternion flips its axis, a complex flips its imaginary part.
+
+    Both meanings are the same operation on the value's two halves, so one name
+    serves them: a kernel body writes `conjugate(q)` for a rotation and
+    `conjugate(z)` for a complex number, and the device answers each with its own
+    generated function.
+    """
+    if _is_scalar_complex(m):
+        return m.conjugate()
     if not isinstance(m, genQuat):
         raise TypeError(f'not defined conjugate for {m.__class__.__name__}')
 
@@ -766,14 +911,20 @@ def _predicate_op(x:Any, op:Callable[[Any], bool], op_name:str)->Any:
 
 
 def isnan(x:Union[genType, Number])->Any:
-    """`x != x`, which is a NaN test in IEEE arithmetic and no other language's."""
+    """`x != x`, which is a NaN test in IEEE arithmetic and no other language's.
+
+    A complex value is NaN when *either* part is, and `x != x` already answers that,
+    because the comparison is made on the two parts.
+    """
     return _predicate_op(x, lambda v: v != v, "isnan")
 
 def isinf(x:Union[genType, Number])->Any:
-    return _predicate_op(x, math.isinf, "isinf")
+    """True for an infinity in either part of a complex value, which is numpy's rule."""
+    return _predicate_op(x, lambda v: _either_part(v, math.isinf), "isinf")
 
 def isfinite(x:Union[genType, Number])->Any:
-    return _predicate_op(x, math.isfinite, "isfinite")
+    """False for an infinity or a NaN in either part, which is numpy's rule."""
+    return _predicate_op(x, lambda v: _both_parts(v, math.isfinite), "isfinite")
 
 
 # ------------------------------------------------- functions math grew late
@@ -793,7 +944,16 @@ def _cbrt(v:float)->float:
     # and its return type would not be copysign's to take.
     return math.copysign(builtins.abs(v) ** (1.0 / 3.0), v)
 
-def _fma(a:float, b:float, c:float)->float:
+def _fma(a:Any, b:Any, c:Any)->Any:
+    """`a * b + c`, fused where the interpreter has a fused multiply-add.
+
+    A **complex** operand takes the product and the sum as they are: numpy has no complex
+    `fma` and there is nothing to fuse in complex arithmetic, so `a * b + c` is the whole
+    operation. GLSL's `fma` is real-only, which is why this is the mathematical meaning
+    rather than the GLSL spelling's.
+    """
+    if _is_scalar_complex(a) or _is_scalar_complex(b) or _is_scalar_complex(c):
+        return a * b + c
     if hasattr(math, "fma"):
         return cast(float, math.fma(a, b, c))
 
@@ -830,8 +990,13 @@ def fma(a:Union[genType, Number], b:Union[genType, Number],
     return _tri_op(a, b, c, _fma, "fma")
 
 def hypot(x:Union[genType, Number], y:Union[genType, Number])->Union[genType, float]:
-    """Euclidean length of (x, y), without the overflow `sqrt(x*x + y*y)` has."""
-    return _bin_op(x, y, math.hypot, "hypot")
+    """Euclidean length of (x, y), without the overflow `sqrt(x*x + y*y)` has.
+
+    A complex operand has no `hypot` of its own -- numpy refuses one -- so the
+    call is refused here too rather than answered with something numpy never
+    would.
+    """
+    return _bin_op(x, y, lambda a, b: _hypot_of(a, b), "hypot")
 
 
 # ------------------------------------------------------------- renamed calls

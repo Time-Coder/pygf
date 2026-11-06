@@ -13,7 +13,15 @@ import numpy as np
 
 # The scalar side of the gf type split, as opposed to the genType containers. It
 # lives here rather than in genType so is_number can use it without a cycle.
-Number: TypeAlias = Union[float, int, bool, Decimal]
+#
+# `complex` is part of the scalar set: numpy's own complex scalars are `Number`s
+# in everything but name, and the element-wise helpers below hand every scalar
+# through `cmath` when it is one. A container slot cannot hold one -- a genType
+# is a ctypes float field -- so the recursion stops at a bare complex and the
+# result is a bare complex, which is what `np.sqrt(complex)` answers too. The
+# *operators* on a container refuse one (`genType._is_scalar_operand`), which is
+# the boundary: a scalar is not the same question as a storable dtype.
+Number: TypeAlias = Union[float, int, bool, Decimal, complex]
 
 _module_map:Dict[str, ModuleType] = {}
 
@@ -38,12 +46,18 @@ def from_import(module_name:str, attr_name:str)->type:
 def is_number(value:Any)->bool:
     """Whether ``value`` is a scalar rather than one of the gf containers.
 
+    A complex value is one, and so is a `Decimal` and a numpy scalar -- none of which a
+    container *slot* can be declared with. That second question is a different one, and
+    `genType._is_scalar_operand` is where it is asked: the element-wise helpers accept the
+    scalar, and the operators on a container refuse it the way they refuse any operand they
+    have no meaning for.
+
     Deliberately not a TypeGuard: the accepted types include ctypes scalars and
     the hand-written dtypes wrappers, so a guard would claim more than it can
     prove and pushes errors downstream instead of removing them.
     """
     return isinstance(value, (
-        float, bool, int, Decimal,
+        float, bool, int, complex, Decimal,
         ctypes.c_bool, ctypes.c_int8, ctypes.c_uint8,
         ctypes.c_int16, ctypes.c_uint16,
         ctypes.c_int32, ctypes.c_uint32,
@@ -53,7 +67,7 @@ def is_number(value:Any)->bool:
         'int8', 'int16', 'int32', 'int64',
         'uint8', 'uint16', 'uint32', 'uint64',
         'float16', 'float32', 'float64', 'float128',
-        'bool'
+        'bool', 'complex64', 'complex128'
     )
 
 def generate_getter_swizzles(char_sets:Iterable[str])->List[str]:

@@ -344,6 +344,21 @@ class genType:
         self._call_on_changed()
 
     @staticmethod
+    def _is_scalar_operand(value:Any)->bool:
+        """Whether a bare value is a scalar a container slot can be declared with.
+
+        `is_number` answers the wider question -- "is this a scalar rather than one of the
+        containers" -- and a complex value, a `Decimal` and a numpy scalar are all scalars.
+        None of them is a dtype a slot can hold: `__type_order` is that closed set, and
+        broadcasting anything else reached `__type_order.index(type(value))` and raised
+        `ValueError: list.index(x): x not in list` from inside the result-type lookup -- an
+        internal error for what is simply an unsupported operand. The operators ask this
+        instead, so the refusal is theirs: `NotImplemented` from the arithmetic, and Python
+        names both types ("unsupported operand type(s) for *: 'float3' and 'complex'").
+        """
+        return is_number(value) and type(value) in genType.__type_order
+
+    @staticmethod
     def _bin_op_dtype(operator:str, type1:type, type2:type, type2_has_negative:bool=False)->type:
         type1_order = genType.__type_order.index(type1)
         type2_order = genType.__type_order.index(type2)
@@ -356,6 +371,16 @@ class genType:
 
     @staticmethod
     def _bin_op_type(operator:str, value1:Union[float, bool, int, genType], value2:Union[float, bool, int, genType])->type:
+        # A scalar a slot cannot be declared with (a complex value, a Decimal, a numpy
+        # scalar) is refused here, the way the operators refuse it, rather than reaching the
+        # dtype lookup below -- which indexes a closed table and raised an internal
+        # `ValueError` instead of naming the operands. See `_is_scalar_operand`.
+        for side in (value1, value2):
+            if not isinstance(side, genType) and not genType._is_scalar_operand(side):
+                raise TypeError(
+                    f"unsupported operand type(s) for {operator}: "
+                    f"'{value1.__class__.__name__}' and '{value2.__class__.__name__}'")
+
         value1_dtype:type = type(value1) if is_number(value1) else cast(genType, value1).dtype
         value2_dtype:type = type(value2) if is_number(value2) else cast(genType, value2).dtype
 
@@ -428,7 +453,7 @@ class genType:
         # scalar, c_double.__add__ hands it to the attribute's __radd__, and every
         # element ends up assigned a vector.
         other_is_homo:bool = self._is_homo(other)
-        if not other_is_homo and not is_number(other):
+        if not other_is_homo and not genType._is_scalar_operand(other):
             return NotImplemented
 
         result_type = self._bin_op_type(operator, self, other)
@@ -442,7 +467,7 @@ class genType:
     def _rop(self, operator:str, other:Union[float, bool, int, genType])->genType:
         # The reflected form only ever has a scalar on the left, so anything else
         # has no meaning to offer and Python should hear so via NotImplemented.
-        if not is_number(other):
+        if not genType._is_scalar_operand(other):
             return NotImplemented
 
         result_type = self._bin_op_type(operator, other, self)
@@ -455,7 +480,7 @@ class genType:
 
     def _iop(self, operator:str, other:Union[float, bool, int, genType])->genType:
         other_is_homo:bool = self._is_homo(other)
-        if not other_is_homo and not is_number(other):
+        if not other_is_homo and not genType._is_scalar_operand(other):
             raise TypeError(f"unsupported operand type(s) for {operator}=: '{self.__class__.__name__}' and '{other.__class__.__name__}'")
 
         operator_func:Callable[[Any,Any], Any] = self._operator_funcs[operator]
@@ -471,7 +496,7 @@ class genType:
         result:genType = btype()
 
         other_is_homo:bool = self._is_homo(other)
-        if not other_is_homo and not is_number(other):
+        if not other_is_homo and not genType._is_scalar_operand(other):
             # NotImplemented, not TypeError, so that `gf_value > attribute` can
             # reach the attribute's own comparison rather than stopping here.
             return NotImplemented
@@ -483,7 +508,7 @@ class genType:
         return result
 
     def _compare_rop(self, operator:str, other:Union[float, bool, int, genType])->genType:
-        if not is_number(other):
+        if not genType._is_scalar_operand(other):
             return NotImplemented
 
         btype = self.gen_type(self.math_form, ctypes.c_bool, self.shape)

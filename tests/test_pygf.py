@@ -72,6 +72,21 @@ the package could be published, because a shared dependency freezes its API):
   * 9 modules shipped both a .py and a .pyi, which makes a type checker see two
     distinct nominal types for one class.
 
+Complex scalars (numpy's complex surface, which the PyGPGPU interpreter backend runs):
+
+  * A complex value is a scalar, but no container *slot* can be declared with one. The
+    operators asked `is_number` and then indexed the closed dtype table, so
+    `float3 * (1+2j)` raised "ValueError: list.index(x): x not in list" from inside the
+    promotion lookup. `genType._is_scalar_operand` is the second question, and the
+    operators refuse a scalar a slot cannot hold by naming both types.
+  * `sign`, `min`/`max`/`clamp`, `isinf`/`isfinite` and `fma` had no complex path:
+    each answered a raw TypeError where numpy answers (the unit direction, the
+    lexicographic minimum, an infinity in either part, the product plus the addend).
+  * `round`/`roundEven` keep their own rules on each part -- away from zero, and to
+    even -- rather than both collapsing into numpy's, so only `roundEven` is `np.round`.
+  * `inversesqrt` is refused with a message: numpy has no such name, GLSL declares no
+    complex form, and the operation it stands for is written `1 / sqrt(z)`.
+
 Run with:
     python tests/test_pygf.py
 """
@@ -139,6 +154,21 @@ def check_raises(label, exc, fn):
 
     FAILURES.append(f"{label}: returned {result!r}, expected {exc.__name__}")
     print(f"FAIL {label}: returned {result!r}, expected {exc.__name__}")
+
+
+def check_close(label, actual, expected, places=12):
+    """`check` for two implementations of one function.
+
+    `cmath` and numpy are different libraries, so `sin(1+2j)` and `np.sin(1+2j)` agree
+    to every digit but the last on some inputs. Comparing exactly would pin which
+    library computed the answer rather than what the answer is.
+    """
+    difference = abs(complex(actual) - complex(expected))
+    if difference > 10 ** (-places):
+        FAILURES.append(f"{label}: got {actual!r}, expected {expected!r}")
+        print(f"FAIL {label}: got {actual!r}, expected {expected!r}")
+    else:
+        print(f"PASS {label}")
 
 
 def vec_type(cls, dtype, size):
@@ -818,6 +848,93 @@ check("fma on a container",
       list(cast(float3, funcs.fma(float3(1.0, 2.0, 3.0), float3(4.0, 5.0, 6.0),
                                  float3(7.0, 8.0, 9.0)))),
       [11.0, 18.0, 27.0])
+
+# --- complex scalars -----------------------------------------------------------
+# A complex value is a scalar the element-wise helpers accept, and numpy is the
+# authority for what each one answers: the PyGPGPU interpreter backend runs these very
+# bodies, so a device answer has to agree with them. What numpy refuses, they refuse.
+# What no container can do is hold one -- a genType slot is a ctypes float field -- so
+# the container operators refuse a complex operand, naming both types.
+print()
+print("--- complex scalars ---")
+
+# The transcendental family, which is `cmath` on the host and the header's complex
+# functions on a device. Two libraries, one answer.
+check_close("sqrt(1+2j)", funcs.sqrt(1 + 2j), np.sqrt(1 + 2j))
+check_close("exp(1+2j)", funcs.exp(1 + 2j), np.exp(1 + 2j))
+check_close("log(1+2j)", funcs.log(1 + 2j), np.log(1 + 2j))
+check_close("log2(1+2j)", funcs.log2(1 + 2j), np.log2(1 + 2j))
+check_close("log10(1+2j)", funcs.log10(1 + 2j), np.log10(1 + 2j))
+check_close("sin(1+2j)", funcs.sin(1 + 2j), np.sin(1 + 2j))
+check_close("cos(1+2j)", funcs.cos(1 + 2j), np.cos(1 + 2j))
+check_close("tan(1+2j)", funcs.tan(1 + 2j), np.tan(1 + 2j))
+check_close("asin(1+2j)", funcs.asin(1 + 2j), np.arcsin(1 + 2j))
+check_close("acos(1+2j)", funcs.acos(1 + 2j), np.arccos(1 + 2j))
+check_close("atan(1+2j)", funcs.atan(1 + 2j), np.arctan(1 + 2j))
+check_close("sinh(1+2j)", funcs.sinh(1 + 2j), np.sinh(1 + 2j))
+check_close("cosh(1+2j)", funcs.cosh(1 + 2j), np.cosh(1 + 2j))
+check_close("tanh(1+2j)", funcs.tanh(1 + 2j), np.tanh(1 + 2j))
+check_close("asinh(1+2j)", funcs.asinh(1 + 2j), np.arcsinh(1 + 2j))
+check_close("acosh(1+2j)", funcs.acosh(1 + 2j), np.arccosh(1 + 2j))
+check_close("atanh(1+2j)", funcs.atanh(1 + 2j), np.arctanh(1 + 2j))
+check("pow(1+2j, 2)", funcs.pow(1 + 2j, 2), np.power(1 + 2j, 2))
+check("exp2(1+2j)", funcs.exp2(1 + 2j), np.exp2(1 + 2j))
+check("abs(1+2j)", funcs.abs(1 + 2j), np.abs(1 + 2j))
+check("conjugate(1+2j)", funcs.conjugate(1 + 2j), np.conjugate(1 + 2j))
+
+# The nine the batch left: numpy defines each of them for a complex value, so pygf
+# answers them rather than raising out of `math` or `ctypes`.
+check("sign(1+2j) is the unit direction", funcs.sign(1 + 2j), np.sign(1 + 2j))
+check("sign(0+0j) stays zero", funcs.sign(0 + 0j), np.sign(0 + 0j))
+check("minimum is lexicographic", funcs.min(1 + 2j, 1 - 1j), np.minimum(1 + 2j, 1 - 1j))
+check("maximum is lexicographic", funcs.max(1 + 2j, 3 - 1j), np.maximum(1 + 2j, 3 - 1j))
+check("min against a real", funcs.min(1 + 2j, 3), np.minimum(1 + 2j, 3))
+check("clamp clips both parts", funcs.clamp(1 + 2j, 0, 1), np.clip(1 + 2j, 0, 1))
+check("fma is the product plus the addend",
+      funcs.fma(1 + 2j, 3 - 1j, 1j), (1 + 2j) * (3 - 1j) + 1j)
+check("isnan sees a NaN in either part",
+      (funcs.isnan(complex(1, _nan)), funcs.isnan(1 + 2j)), (True, False))
+check("isinf sees an infinity in either part",
+      (funcs.isinf(complex(_inf, 1)), funcs.isinf(1 + 2j)), (True, False))
+check("isfinite needs both parts finite",
+      (funcs.isfinite(complex(_inf, 1)), funcs.isfinite(1 + 2j)), (False, True))
+
+# The two rounding names keep the rules they already have for a real, applied to each
+# part of a complex value: `round` goes away from zero at a half, `roundEven` to even,
+# which is why only the second one agrees with `np.round`.
+check("round(1.5+2.5j) rounds away from zero", funcs.round(1.5 + 2.5j), complex(2, 3))
+check("round(-1.5-2.5j)", funcs.round(-1.5 - 2.5j), complex(-2, -3))
+check("roundEven(1.5+2.5j) rounds to even", funcs.roundEven(1.5 + 2.5j), np.round(1.5 + 2.5j))
+check("roundEven(-1.5-2.5j)", funcs.roundEven(-1.5 - 2.5j), np.round(-1.5 - 2.5j))
+check("round keeps its rule for a real", funcs.round(1.5), 2.0)
+check("roundEven keeps its rule for a real", funcs.roundEven(1.5), 2.0)
+
+# numpy refuses these for a complex value, so pygf refuses them too -- `inversesqrt`
+# with its own message, because the operation it stands for has a spelling.
+check_raises("floor refuses a complex value", TypeError, lambda: funcs.floor(1 + 2j))
+check_raises("trunc refuses a complex value", TypeError, lambda: funcs.trunc(1 + 2j))
+# `fmod` is annotated `float`: a complex operand is outside that contract, which the
+# checker is right to refuse at the call, so the runtime refusal is pinned through a
+# value typed Any.
+check_raises("fmod refuses a complex value", TypeError,
+             lambda: funcs.fmod(cast(Any, 1 + 2j), 2))
+check_raises("hypot refuses a complex operand", TypeError, lambda: funcs.hypot(1 + 2j, 2.0))
+check_raises("inversesqrt refuses a complex value", TypeError,
+             lambda: funcs.inversesqrt(1 + 2j))
+
+# A container slot cannot hold a complex value, so the operators refuse one -- naming
+# both types, where the promotion table used to raise "list.index(x): x not in list"
+# from inside itself.
+check_raises("float3 * complex", TypeError, lambda: float3(1, 2, 3) * (1 + 2j))
+check_raises("complex * float3", TypeError, lambda: (1 + 2j) * float3(1, 2, 3))
+check_raises("float3 + complex", TypeError, lambda: float3(1, 2, 3) + (1 + 2j))
+check_raises("min(float3, complex)", TypeError,
+             lambda: funcs.min(float3(1, 2, 3), 1 + 2j))
+check_raises("clamp(float3, complex, complex)", TypeError,
+             lambda: funcs.clamp(float3(1, 2, 3), 1 + 2j, 1 + 2j))
+check_raises("quatd * complex", TypeError, lambda: quatd(1, 0, 0, 0) * (1 + 2j))
+check("a container still takes a real scalar",
+      list(cast(float3, funcs.min(float3(1.0, 2.0, 3.0), 2.5))), [1.0, 2.0, 2.5])
 
 # `textureSize` is declaration-only for the same reason dFdx is: a sampler's
 # size is a fact about the render.

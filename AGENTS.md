@@ -171,6 +171,24 @@ not always catch.
   package's own types; the type lookup is duck-typed (`_fields_` plus `numpy_dtype`) so
   a package with wider vectors can join through `register_vector_type`; and a mixed
   list stays numpy's own verdict, because there is no honest record to fill.
+- **A complex value is a scalar, but not a storable one.** `Number` and `is_number` include
+  `complex` (numpy's complex scalars are numbers in everything but name), and the element-wise
+  helpers in `funcs.py` route each complex scalar through `cmath` -- the transcendental family,
+  `pow`, `abs`, `sign`, `round`/`roundEven`, `min`/`max`/`clamp`, the predicates and `fma`. A
+  container **slot** cannot hold one (a genType is a ctypes float field), so the *operators*
+  ask the narrower question, `genType._is_scalar_operand`: broadcasting anything outside
+  `__type_order` used to reach `__type_order.index(type(value))` and raise
+  `ValueError: list.index(x): x not in list` from inside the result-type lookup -- for a
+  complex value, a `Decimal` and a numpy scalar alike. The operators now refuse such an operand
+  the way they refuse any other (`NotImplemented`, so Python names both types), and
+  `_bin_op_type` raises the same message for the helper path. **numpy is the authority for what
+  each name answers** (the PyGPGPU interpreter backend runs these bodies, so a device answer has
+  to agree): `sign` is the unit direction, `min`/`max`/`clamp` are lexicographic,
+  `isinf`/`isfinite` are either/both-part, and what numpy refuses (`floor`, `fmod`, `hypot`, ...)
+  is refused here with a reason. Two rules stay pygf's own: `round` and `roundEven` keep the
+  rules they already have for a real, applied to each part (away from zero, and to even -- only
+  the second is `np.round`), and `inversesqrt` is refused with a message because neither numpy
+  nor GLSL declares a complex form.
 - **The dtype may be spelled positionally.** `np.array(obj, dtype)` is as valid as
   the keyword form, and reading only the keyword silently sent an explicit dtype down
   the flattening path, producing a `(2, 3)` grid of records instead of two.
