@@ -189,6 +189,18 @@ not always catch.
   rules they already have for a real, applied to each part (away from zero, and to even -- only
   the second is `np.round`), and `inversesqrt` is refused with a message because neither numpy
   nor GLSL declares a complex form.
+- **This is still a vector library: a complex name may only be a name that also does vectors.**
+  The complex support above lives **inside** functions that already exist and already work on
+  vectors -- it added no public function and no `__all__` entry (0.2.0 through 0.3.0 keep the
+  same public surface, checked with `ast` against the earlier commit). The rule for the future:
+  a *new* function is added here only when it serves the vector side; a name that would be
+  complex-only (a complex `exp10`, a complex `degrees`, a complex rounding helper) belongs to
+  the caller, not to this package. Names that are naturally dual -- `abs`, `fabs`, `length`,
+  `isnan`, `pow` -- need no branch and stay as they are. `hypot` and `inversesqrt` show the
+  other half of the rule: they are vector functions first, so they stay and *refuse* a complex
+  operand instead of answering one numpy never would. When PyGPGPU needs a complex answer for a
+  name that pygf refuses, it puts that host body beside its own builtins rather than widening
+  this package.
 - **The dtype may be spelled positionally.** `np.array(obj, dtype)` is as valid as
   the keyword form, and reading only the keyword silently sent an explicit dtype down
   the flattening path, producing a `(2, 3)` grid of records instead of two.
