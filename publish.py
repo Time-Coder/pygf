@@ -32,6 +32,20 @@ def _version() -> str:
 
 
 def main() -> int:
+    # The artifacts are built from the working tree, so a tree that differs from the commit
+    # means the upload would carry code the history does not have -- 0.2.1 went out that way.
+    # `build_wheel.py` refuses to build a dirty tree for the same reason; this refuses to
+    # *upload* one, which also catches an edit made between the build and the upload.
+    status = subprocess.run(["git", "status", "--porcelain"], cwd=ROOT,
+                            capture_output=True, text=True, check=True).stdout
+    modified = [line for line in status.splitlines() if not line.startswith("??")]
+    if modified:
+        print("refusing to publish artifacts built from a working tree that differs from"
+              " the commit:")
+        for line in modified:
+            print(f"  {line}")
+        return 1
+
     if len(sys.argv) > 1 and sys.argv[1] == "build":
         subprocess.check_call([sys.executable, "-m", "build", str(ROOT)])
 
