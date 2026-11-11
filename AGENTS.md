@@ -29,6 +29,14 @@ python tools/sync_swizzle_blocks.py
 `python ../pygf/static_check.py` and `python ../pygf/tests/test_pygf.py` are how
 PyUSD reaches these checks; see `../PyUSD/AGENTS.md` for what it relies on.
 
+An editable install must ask pip for the compat form: `pip install -e . --config-settings
+editable_mode=compat`. Setuptools' default is the "strict" editable -- an *executable* .pth
+that installs a MetaPathFinder -- which the runtime imports fine but which no static tool can
+resolve: ty reports every `pygf` import unresolved and the IDE's import completions see
+nothing. The compat form writes a plain-path .pth, which ty, pyright and every other static
+resolver read. It cannot be pinned in pyproject.toml (`tool.setuptools must not contain
+{'editable_mode'}`); the flag is per-install.
+
 ## Conventions
 
 Four spaces, double-quoted strings, the 88-column target from `ruff.toml`
