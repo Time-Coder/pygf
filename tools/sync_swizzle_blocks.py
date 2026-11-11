@@ -237,6 +237,11 @@ def imports_block(basename: str, swizzles: str, own_base: str, own_class: str) -
     names = [name for name in _annotation_names(basename, swizzles) if name not in (own_base, own_class)]
 
     lines = ["if TYPE_CHECKING:", ""]
+    # A swizzle setter also accepts a plain sequence of numbers, and the union
+    # spells that with collections.abc.Sequence -- a stdlib name the module does
+    # not otherwise bind.
+    if "Sequence[" in swizzles:
+        lines.append("    from collections.abc import Sequence")
     lines.extend(f"    from .{name} import {name}" for name in names)
     lines.append("")
     lines.append(IMPORTS_BEGIN)

@@ -4,6 +4,27 @@ Every check here corresponds to a defect that type checking or review surfaced
 but that the other smoke scripts never exercised, so it would otherwise stay
 broken.
 
+0.6.0 (the PyGPGPU base-class unification):
+
+  * genVec.__setattr__ wrote a rgba/stpq swizzle through the GLSL spelling, which
+    for the x/y/z/w-named classes is not a field name -- ctypes stored a python
+    attribute instead and the fields kept their old values. Writes go through the
+    component's own accessor now.
+  * A swizzle write accepted only a matching genVec or a scalar; a sequence and a
+    scalar broadcast join it.
+  * The dtype tables covered float/int/uint/double and half only; the narrow
+    integer ctypes classes (c_byte, c_ubyte, c_short, c_long, ...) rank in
+    __type_order now, name in __dtype_name_map, and convert a float component the
+    way C does (truncation toward zero).
+  * __init__ refused sequence arguments; it flattens them.
+  * genType had no __pos__ and no __invert__.
+  * is_number recognized numpy scalar *names*, so a container class sharing one
+    (PyGPGPU's int8/float16 vectors) counted as a number and broadcast as an
+    operand.
+  * The swizzle/arithmetic result types resolve through the operand's own family
+    when pygf carries no module for the dtype, and the numeric s0-style swizzles
+    exist behind a per-class gate.
+
 Original gf-layer defects (inherited from pyusd/gf):
 
   * funcs.min / max went through __builtins__, which is a dict inside an
@@ -103,11 +124,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import pygf
 from pygf import funcs
+from pygf.helper import is_number
 from pygf.bool3 import bool3
 from pygf.alias import color3f, normal3f, point3f, texCoord3f, vector3f
 from pygf.double3 import double3
 from pygf.float2 import float2
 from pygf.float3 import float3
+from pygf.float4 import float4
 from pygf.genMat import genMat
 from pygf.genQuat import genQuat
 from pygf.genVec2 import genVec2
@@ -115,6 +138,7 @@ from pygf.genVec3 import genVec3
 from pygf.genVec4 import genVec4
 from pygf.half3 import half3
 from pygf.half4 import half4
+from pygf.int2 import int2
 from pygf.int3 import int3
 from pygf.matrix3d import matrix3d
 from pygf.matrix3f import matrix3f
@@ -940,6 +964,85 @@ check("a container still takes a real scalar",
 # size is a fact about the render.
 check_raises("textureSize is declaration-only", NotImplementedError,
              lambda: funcs.textureSize("sampler", 0))
+
+# --- 0.6.0: the OpenCL-shaped vectors and the conversions they need -------------
+
+# A swizzle write used to name the GLSL spelling through ctypes, which for the
+# x/y/z/w-named classes is not a field: ctypes stored a *python* attribute
+# instead, the fields kept their old values, and the instance was permanently
+# shadowed. The write goes through the component's own accessor now.
+v = float2(1.0, 2.0)
+v.rg = 7
+check("a rgba write reaches the fields", [v.x, v.y], [7.0, 7.0])
+check("the read follows the field", [v.r, v.g], [7.0, 7.0])
+w = float4(1.0, 2.0, 3.0, 4.0)
+w.b = 9.0
+check("a single rgba letter reaches the field", w.z, 9.0)
+
+# A scalar broadcast into a multi-component swizzle, and a sequence value:
+# the shapes a ctypes-flavoured caller writes.
+w.xy = (5, 6)
+check("a swizzle write accepts a sequence", [w.x, w.y], [5.0, 6.0])
+w.xy = 3
+check("a swizzle write broadcasts a scalar", [w.x, w.y], [3.0, 3.0])
+check_raises("a repeated swizzle has no setter", AttributeError,
+             lambda: setattr(w, "xx", (1, 1)))
+check_raises("a swizzle of the wrong value type is refused", TypeError,
+             lambda: setattr(w, "xy", {"x": 1}))
+
+# A sequence argument carries its components, the way a ctypes caller builds one.
+check("a sequence argument flattens", list(float4([1.0, 2.0], 3.0, 4.0)),
+      [1.0, 2.0, 3.0, 4.0])
+
+# +v copies, ~v flips integer slots and is refused on floats by python itself.
+check("unary plus copies", list(+float3(1.0, 2.0, 3.0)), [1.0, 2.0, 3.0])
+check("unary plus is a new object", (+float2(1.0, 2.0)) is not None, True)
+check("invert on an integer vector", list(~int2(5, 5)), [-6, -6])
+check_raises("invert on a float vector is refused", TypeError,
+             lambda: ~float2(1.0, 2.0))
+
+# A container class can share a numpy scalar's name (PyGPGPU's `int8` and
+# `float16` vectors): such an instance is a container, not a number.
+class int8_like:
+    math_form = None
+
+check("a container named like a numpy scalar is not a number",
+      is_number(int8_like()), False)
+
+# The narrow integer families a caller package adds: the dtype tables rank
+# them, the conversions are C's, and in-place arithmetic needs no result class.
+# A family whose module pygf cannot load (a class defined here has no package)
+# is refused with the honest error -- the cross-package resolution is the
+# caller's suite's job.
+class char2(genVec2):
+    _fields_ = [("x", ctypes.c_byte), ("y", ctypes.c_byte)]
+
+char2._numeric_swizzles = True
+
+check("a float into a narrow slot truncates like C", list(char2(1.9, -1.5)), [1, -1])
+check("an out-of-range integer wraps", list(char2(-1, 300)), [-1, 44])
+v = char2(1, 2)
+v += char2(3, 4)
+check("narrow in-place arithmetic stays in the family", list(v), [4, 6])
+check("a comparison answers the int vector of the width",
+      list(char2(1, 2) < char2(2, 1)), [1, 0])
+check("a numeric single component is the scalar", char2(1, 2).s0, 1)
+check_raises("a numeric swizzle beyond the charset is refused", AttributeError,
+             lambda: char2(1, 2).s2)
+check_raises("a family class pygf cannot load is refused", AttributeError,
+             lambda: char2(1, 2).s01)
+
+class ushort2(genVec2):
+    _fields_ = [("x", ctypes.c_uint16), ("y", ctypes.c_uint16)]
+
+ushort2._numeric_swizzles = True
+
+check("a ushort slot truncates a float like C", list(ushort2(2.9, 0.5)), [2, 0])
+
+# `c_int` and `c_long` are one class on Windows: the name table must keep the
+# `int` spelling for plain integer vectors and not let the `long` entry win.
+check("an int vector still resolves as int",
+      [type(v).__name__ for v in (int2(1, 2) == 1,)], ["int2"])
 
 print()
 if FAILURES:

@@ -204,35 +204,78 @@ class genType:
 
     __type_order:List[type] = [
         bool, ctypes.c_bool,
-        int, ctypes.c_int, ctypes.c_uint,
+        int,
+        # The narrow integer widths (and `long`, which the CUDA/HIP `long`
+        # vectors spell as c_long) rank by C width, below `int`'s own family
+        # ordering: char/uchar, then short, then int/uint.
+        ctypes.c_byte, ctypes.c_ubyte, ctypes.c_short,
+        ctypes.c_int, ctypes.c_uint,
         # c_uint16 is the half storage type. It sits above uint so that the
         # unsigned wrap-around special case in _bin_op_dtype (which keys off
         # __uint_index) does not apply to it, and below float so half promotes
         # to float rather than the other way round.
         ctypes.c_uint16,
+        ctypes.c_long, ctypes.c_ulong,
+        ctypes.c_longlong, ctypes.c_ulonglong,
         float, ctypes.c_float, ctypes.c_double
     ]
     __uint_index:int = __type_order.index(ctypes.c_uint)
     __gen_type_map:Dict[Tuple[MathForm, type, Tuple[int, ...]], type] = {}
-    __dtype_name_map:Dict[type, str] = {
-        ctypes.c_bool: 'bool',
-        ctypes.c_int: 'int',
-        ctypes.c_uint: 'uint',
-        ctypes.c_uint16: 'half',
-        ctypes.c_float: 'float',
-        ctypes.c_double: 'double',
-        bool: 'bool',
-        int: 'int',
-        float: 'float'
-    }
-    __dtype_python_type_map:Dict[type, type] = {
-        ctypes.c_bool: bool,
-        ctypes.c_int: int,
-        ctypes.c_uint: int,
-        ctypes.c_uint16: float,
-        ctypes.c_float: float,
-        ctypes.c_double: float,
-    }
+    # The name table is built by setdefault over an ordered list, not a literal,
+    # because the ctypes classes alias each other per platform: on Windows
+    # ``c_int is c_long``, so two literal entries for the same key would leave
+    # the *later* one ('long') answering for plain ``int`` vectors as well.
+    # The order says which spelling wins an alias: ``int`` before ``long``,
+    # ``half`` (the c_uint16 storage) before nothing -- it is the only name for
+    # that class.
+    __dtype_name_map:Dict[type, str] = {}
+    for _dtype, _name in (
+        (ctypes.c_bool, 'bool'),
+        (ctypes.c_byte, 'char'),
+        (ctypes.c_ubyte, 'uchar'),
+        (ctypes.c_short, 'short'),
+        (ctypes.c_int, 'int'),
+        (ctypes.c_uint, 'uint'),
+        (ctypes.c_uint16, 'half'),
+        (ctypes.c_long, 'long'),
+        (ctypes.c_ulong, 'ulong'),
+        (ctypes.c_longlong, 'longlong'),
+        (ctypes.c_ulonglong, 'ulonglong'),
+        (ctypes.c_float, 'float'),
+        (ctypes.c_double, 'double'),
+        (bool, 'bool'),
+        (int, 'int'),
+        (float, 'float'),
+    ):
+        __dtype_name_map.setdefault(_dtype, _name)
+    del _dtype, _name
+    __dtype_python_type_map:Dict[type, type] = {}
+    for _dtype, _python in (
+        (ctypes.c_bool, bool),
+        (ctypes.c_byte, int),
+        (ctypes.c_ubyte, int),
+        (ctypes.c_short, int),
+        (ctypes.c_int, int),
+        (ctypes.c_uint, int),
+        (ctypes.c_uint16, float),
+        (ctypes.c_long, int),
+        (ctypes.c_ulong, int),
+        (ctypes.c_longlong, int),
+        (ctypes.c_ulonglong, int),
+        (ctypes.c_float, float),
+        (ctypes.c_double, float),
+    ):
+        __dtype_python_type_map.setdefault(_dtype, _python)
+    del _dtype, _python
+    # The ctypes classes whose raw field holds a C integer. A float written into
+    # one truncates toward zero -- the C float-to-integer conversion -- instead
+    # of reaching ctypes and raising. A *converting accessor* (half's `x`
+    # property) owns its own conversion and is checked before this.
+    INTEGER_FIELD_TYPES:Tuple[type, ...] = (
+        ctypes.c_byte, ctypes.c_ubyte, ctypes.c_short, ctypes.c_ushort,
+        ctypes.c_int, ctypes.c_uint, ctypes.c_long, ctypes.c_ulong,
+        ctypes.c_longlong, ctypes.c_ulonglong,
+    )
 
     _operator_funcs:Dict[str, Callable[[Any,Any], Any]] = {
         "+": lambda x, y: x + y,
@@ -382,6 +425,49 @@ class genType:
         else:
             return (type1 if type1_order > type2_order else type2)
 
+    @classmethod
+    def _family_name_of(cls, dtype:type)->Optional[str]:
+        """The family name pygf's table gives ``dtype`` ('float', 'half', ...).
+
+        ``genVec`` compares it against the class's own family name to decide
+        whether a swizzle result resolves through ``gen_type`` or through the
+        class's own package.
+        """
+        return cls.__dtype_name_map.get(dtype)
+
+    @staticmethod
+    def _family_vector_type(math_form:"MathForm", result_dtype:type,
+                            shape:Tuple[int, ...], value1:Any, value2:Any)->Optional[type]:
+        """``<family><width>`` from an operand's own package, or None.
+
+        Vectors only: a quaternion or a matrix result is named by ``gen_type``
+        and pygf carries every one of those. A vector result whose dtype pygf
+        has no module for (a caller package's ``char2``, ``ushort2`` or
+        ``float8``) belongs to the operand's own family -- its class name minus
+        the width digits, loaded beside the operand's own modules. That load is
+        also authoritative when pygf's own name for the dtype disagrees with
+        the operand's family: ``c_uint16`` maps to ``half``, but a ``ushort2``
+        operand's arithmetic must answer a ``ushort2``.
+        """
+        if math_form != MathForm.Vec:
+            return None
+
+        for value in (value1, value2):
+            if not isinstance(value, genType):
+                continue
+            if value.dtype != result_dtype:
+                continue
+            cls:type = type(value)
+            family:str = cls.__name__.rstrip("0123456789")
+            module:str = cls.__module__
+            package:Optional[str] = module.rpartition(".")[0] or None
+            name:str = f"{family}{shape[0]}"
+            try:
+                return from_import(f".{name}", name, package=package)
+            except (ImportError, AttributeError):
+                continue
+        return None
+
     @staticmethod
     def _bin_op_type(operator:str, value1:Union[float, bool, int, genType], value2:Union[float, bool, int, genType])->type:
         # A scalar a slot cannot be declared with (a complex value, a Decimal, a numpy
@@ -422,7 +508,17 @@ class genType:
             shape = value2.shape
 
         result_dtype:type = genType._bin_op_dtype(operator, value1_dtype, value2_dtype, second_has_negative)
-        result_type:type = genType.gen_type(cast(MathForm, math_form), result_dtype, shape)
+        # The operand's own family answers first, so a dtype pygf carries no
+        # module for (PyGPGPU's char/uchar/short families and 8/16 widths) and
+        # a dtype whose pygf name disagrees with the operand's family (ushort
+        # against half) both resolve honestly; everything else falls through to
+        # gen_type, whose ValueError names the missing width.
+        family_type:Optional[type] = genType._family_vector_type(
+            cast(MathForm, math_form), result_dtype, shape, value1, value2)
+        if family_type is not None:
+            result_type:type = family_type
+        else:
+            result_type = genType.gen_type(cast(MathForm, math_form), result_dtype, shape)
         # Keep the *meaning* the operands had: a position minus a position is a displacement,
         # a position plus a displacement is a position. When the arithmetic is meaningless the
         # alias table raises instead of returning a number that would claim a meaning.
@@ -439,6 +535,27 @@ class genType:
         result:genType = result_type()
         for i in range(result._slot_count()):
             result[i] = ((not self[i]) if self.dtype == ctypes.c_bool else -self[i])
+
+        return result
+
+    def __pos__(self)->genType:
+        """A copy: ``+v`` changes nothing but answers a new container."""
+        result:genType = self.__class__()
+        for i in range(result._slot_count()):
+            result[i] = self[i]
+
+        return result
+
+    def __invert__(self)->genType:
+        """Component-wise bitwise not.
+
+        An integer slot flips; a float slot has no ``~`` and python's own
+        ``TypeError`` names it -- which is also what refuses a half's decoded
+        float components without this method knowing about binary16 at all.
+        """
+        result:genType = self.__class__()
+        for i in range(result._slot_count()):
+            result[i] = ~self[i]
 
         return result
 

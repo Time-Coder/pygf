@@ -6,7 +6,7 @@ import itertools
 from collections.abc import Iterable
 from decimal import Decimal
 from types import ModuleType
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, List, Optional, Union
 from typing_extensions import TypeAlias
 
 import numpy as np
@@ -32,11 +32,20 @@ def in_annotations(name:str, cls:type)->bool:
 
     return False
 
-def from_import(module_name:str, attr_name:str)->type:
+def from_import(module_name:str, attr_name:str,
+                package:Optional[str] = None)->type:
+    """Import ``attr_name`` out of ``module_name``, remembering the module.
+
+    ``package`` resolves a relative ``module_name`` against a foreign package:
+    ``genVec``'s swizzle result types live in the *class's own* package -- a
+    package that adds vector widths pygf does not carry (``char2``, ``float8``)
+    resolves ``.char8`` beside its own modules -- while the default keeps
+    ``gen_type``'s resolution inside pygf.
+    """
     if module_name not in _module_map:
         module = None
         if module_name.startswith("."):
-            module = importlib.import_module(module_name, package=__package__)
+            module = importlib.import_module(module_name, package=package or __package__)
         else:
             module = importlib.import_module(module_name)
         _module_map[module_name] = module
@@ -52,40 +61,70 @@ def is_number(value:Any)->bool:
     scalar, and the operators on a container refuse it the way they refuse any operand they
     have no meaning for.
 
+    The numpy names are matched against ``value.__class__.__name__`` because numpy itself
+    need not be imported here -- but a container class can share a numpy scalar's name
+    (PyGPGPU's ``int8`` and ``float16`` vectors against numpy's scalars of the same
+    spelling), so a value that carries a ``math_form`` is a container whatever it is
+    called, and never a number.
+
     Deliberately not a TypeGuard: the accepted types include ctypes scalars and
     the hand-written dtypes wrappers, so a guard would claim more than it can
     prove and pushes errors downstream instead of removing them.
     """
-    return isinstance(value, (
+    if isinstance(value, (
         float, bool, int, complex, Decimal,
         ctypes.c_bool, ctypes.c_int8, ctypes.c_uint8,
         ctypes.c_int16, ctypes.c_uint16,
         ctypes.c_int32, ctypes.c_uint32,
         ctypes.c_int64, ctypes.c_uint64,
         ctypes.c_float, ctypes.c_double, ctypes.c_longdouble
-    )) or value.__class__.__name__ in (
+    )):
+        return True
+
+    if value.__class__.__name__ in (
         'int8', 'int16', 'int32', 'int64',
         'uint8', 'uint16', 'uint32', 'uint64',
         'float16', 'float32', 'float64', 'float128',
         'bool', 'complex64', 'complex128'
-    )
+    ):
+        return not hasattr(value, 'math_form')
 
-def generate_getter_swizzles(char_sets:Iterable[str])->List[str]:
+    return False
+
+def generate_getter_swizzles(char_sets:Iterable[str],
+                             lengths:Optional[Iterable[int]] = None)->List[str]:
+    """Every read swizzle over each character set.
+
+    ``lengths`` bounds the swizzle length; the default (1 through 4) is GLSL's
+    range. A caller spelling a wider namespace (OpenCL's numeric ``s0``-style
+    components on an 8- or 16-wide vector) passes its own lengths, since the
+    combinations grow as ``len(char_set) ** length`` and are only enumerable for
+    a small set at a time.
+    """
     result:List[str] = []
 
     for char_set in char_sets:
-        for length in range(1, 4 + 1):
+        for length in (range(1, 4 + 1) if lengths is None else lengths):
             for combo in itertools.product(char_set, repeat=length):
                 swizzle = ''.join(combo)
                 result.append(swizzle)
 
     return result
 
-def generate_setter_swizzles(char_sets:Iterable[str])->List[str]:
+def generate_setter_swizzles(char_sets:Iterable[str],
+                             lengths:Optional[Iterable[int]] = None)->List[str]:
+    """Every writable swizzle over each character set: no component repeats.
+
+    Like :func:`generate_getter_swizzles`, the length range defaults to GLSL's
+    1 through 4 and can be named for a wider namespace.
+    """
     result:List[str] = []
 
     for char_set in char_sets:
-        for length in range(1, len(char_set) + 1):
+        for length in (range(1, len(char_set) + 1) if lengths is None else lengths):
+            if length > len(char_set):
+                continue
+
             for combo in itertools.permutations(char_set, length):
                 swizzle = ''.join(combo)
                 result.append(swizzle)
@@ -99,12 +138,12 @@ def generate_swizzle_defines(type_name:str, dtype_name:str, char_sets:List[str])
     setter_swizzles:List[str] = generate_setter_swizzles(char_sets)
     for swizzle in getter_swizzles:
         return_type_name:str = dtype_name
-        input_type_name:str = "Union[bool, int, float]"
+        input_type_name:str = "Union[bool, int, float, Sequence[float]]"
 
         n_swizzle = len(swizzle)
         if n_swizzle > 1:
             return_type_name:str = vec_basename + str(n_swizzle)
-            input_type_name:str = f"Union[bool, int, float, genVec{n_swizzle}]"
+            input_type_name:str = f"Union[bool, int, float, genVec{n_swizzle}, Sequence[float]]"
 
         result += f"""
     @property

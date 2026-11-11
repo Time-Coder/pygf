@@ -20,6 +20,7 @@ import numpy as np
 from .genType import MathForm, genType
 from .helper import (
     Number,
+    from_import,
     generate_getter_swizzles,
     generate_setter_swizzles,
     in_annotations,
@@ -68,6 +69,15 @@ class genVec(genType, ctypes.Structure):
         'q': 3
     }
 
+    # OpenCL spells a vector's components ``s0``-style, and a 16-wide vector
+    # names the slots above nine in hex, either case. The names are attribute
+    # names, so every numeric swizzle carries the ``s`` prefix; the index of a
+    # character is its hex value. A subclass that wants the family turns this
+    # on (PyGPGPU's vectors do, so ``char2().s01`` and ``float16().sA`` read
+    # there); pygf's own GLSL-shaped surface keeps it off.
+    _numeric_swizzles:bool = False
+    _NUMERIC_LENGTHS:Tuple[int, ...] = (1, 2, 3, 4, 8, 16)
+
     _all_getter_swizzles:Set[str] = set()
     _all_setter_swizzles:Set[str] = set()
     __all_total_swizzles:Set[str] = set()
@@ -81,6 +91,16 @@ class genVec(genType, ctypes.Structure):
         genType.__init__(self)
         self._related_mat:Optional[genMat] = None
         self._mat_start_index:int = -1
+
+        # A sequence argument carries its components: `float4([1, 2], 3, 4)` is
+        # the positional call, which is what the ctypes-flavoured callers write.
+        expanded:List[Any] = []
+        for arg in args:
+            if isinstance(arg, (list, tuple)):
+                expanded.extend(arg)
+            else:
+                expanded.append(arg)
+        args = tuple(expanded)
 
         i: int = 0
         n_data: int = len(self)
@@ -151,6 +171,118 @@ class genVec(genType, ctypes.Structure):
     def vec_type(dtype:type, size:int)->type:
         return genType.gen_type(MathForm.Vec, dtype, (size,))
 
+    def _vec_result_type(self, size:int)->type:
+        """The vector class a swizzle of ``size`` components answers.
+
+        ``vec_type`` names pygf's own modules, so a dtype pygf carries no module
+        for (a caller package's ``char2`` or ``float8``) raises there, and the
+        result belongs to the operand's own family -- its class name minus the
+        width digits, loaded beside that class's modules. The family load is
+        also authoritative for ``ushort``: ``c_uint16`` is pygf's ``half``
+        dtype, and a ``ushort2`` swizzle must answer a ``ushort2``. One
+        component is the scalar itself, whatever family the class belongs to.
+        """
+        if size == 1:
+            return self.vec_type(self.dtype, 1)
+
+        cls:type = type(self)
+        cls_name:str = cls.__name__
+        family:str = cls_name.rstrip("0123456789")
+        if len(family) == len(cls_name):
+            # A name carrying no width digits is an *alias* (color3f, point3f):
+            # it is named after a meaning, not a family, and pygf's own naming
+            # resolves it to the base vector the alias subclasses.
+            return self.vec_type(self.dtype, size)
+        if genType._family_name_of(self.dtype) == family:
+            try:
+                return self.vec_type(self.dtype, size)
+            except ValueError:
+                pass  # pygf names the family but carries no module of this width
+
+        package:Optional[str] = cls.__module__.rpartition(".")[0] or None
+        name:str = f"{family}{size}"
+        try:
+            return from_import(f".{name}", name, package=package)
+        except (ImportError, AttributeError):
+            raise AttributeError(
+                f"no {name} vector class beside {cls.__module__}: "
+                f"'{cls.__name__}' has no {size}-component swizzle result") from None
+
+    def _letter_index(self, ch:str)->int:
+        """The component a GLSL spelling names.
+
+        On a 16-wide vector the lowercase hex digits ``a``-``f`` name the slots
+        above nine (OpenCL's ``sA``-style spelling, either case), which shadows
+        rgba's ``a`` and ``b`` exactly as the OpenCL layout does.
+        """
+        if len(self) >= 16 and ch in "abcdef":
+            return int(ch, 16)
+        return self._attr_index_map[ch]
+
+    def _component_attr(self, index:int)->str:
+        """The attribute name a component is stored through.
+
+        The class's own spelling wins: ``x`` on the GLSL-shaped classes and on
+        a half (whose ``x`` is the converting property), ``s0`` on the
+        OpenCL-shaped wide ones. Writing through the *field* name alone would
+        bypass the half property and store a raw bit pattern; writing through
+        the GLSL spelling on a wide class would name nothing.
+        """
+        field_name:str = self._fields_[index][0]
+        spelling:str = 'xyzw'[index] if index < 4 else field_name
+        return spelling if hasattr(type(self), spelling) else field_name
+
+    def _field_value(self, index:int, value:Any)->Any:
+        """The value a component slot stores, converted the way C would.
+
+        A float into a raw integer field truncates toward zero -- the C
+        float-to-integer conversion -- instead of reaching ctypes and raising.
+        A converting accessor (half's ``x`` property) owns its own conversion
+        and is left alone; a ``c_uint16`` raw field (``ushort``) is converted.
+        """
+        spelling:str = 'xyzw'[index] if index < 4 else self._fields_[index][0]
+        if isinstance(getattr(type(self), spelling, None), property):
+            return value
+
+        field_type:type = self._fields_[index][1]
+        if field_type in genType.INTEGER_FIELD_TYPES and isinstance(value, float):
+            return int(value)
+
+        return value
+
+    def _numeric_charset(self)->str:
+        """The numeric characters this width's components are named by."""
+        n:int = len(self)
+        if n >= 16:
+            return "0123456789ABCDEFabcdef"
+        if n >= 8:
+            return "01234567"
+        return "0123456789ABCDEF"[:n]
+
+    def _numeric_indices(self, name:str)->Optional[List[int]]:
+        """The component indices a numeric swizzle names, or None.
+
+        ``s0`` reads one component, ``s01`` two, ``sAF`` names slots 10 and 15
+        on a 16-wide vector. The ``s`` prefix is part of every numeric name
+        (digits cannot start an attribute), the characters come from this
+        width's set, and the length is one of the enumerable ones -- which is
+        what keeps a read of ``s01230123`` on a four-wide vector (an ``s``-spelled
+        eight-component result) legal while ``s01234`` is not.
+        """
+        if not self._numeric_swizzles:
+            return None
+        if len(name) < 2 or name[0] != 's' or len(name) - 1 not in self._NUMERIC_LENGTHS:
+            return None
+
+        charset:str = self._numeric_charset()
+        indices:List[int] = []
+        for char in name[1:]:
+            if char not in charset:
+                return None
+            indices.append(int(char, 16))
+
+        return indices
+
     def _update_data(self, indices:Optional[Iterable[int]] = None):
         genType._update_data(self, indices)
 
@@ -162,6 +294,22 @@ class genVec(genType, ctypes.Structure):
                 self._related_mat[self._mat_start_index + index] = self[index]
 
             self._related_mat._call_on_changed()
+
+    def _int_result_type(self)->type:
+        """The integer vector class of this width, in this vector's own family.
+
+        Comparisons answer an ``intN`` (per-component 0/1, the device's own
+        convention). ``gen_type`` names pygf's modules, so a width pygf carries
+        no ``int`` module for -- an 8- or 16-wide vector, whose ``int8`` lives
+        in the package that added it -- loads the family class beside the
+        operand's own modules instead.
+        """
+        try:
+            return genType.gen_type(MathForm.Vec, ctypes.c_int, self.shape)
+        except ValueError:
+            package:Optional[str] = type(self).__module__.rpartition(".")[0] or None
+            name:str = f"int{len(self)}"
+            return from_import(f".{name}", name, package=package)
 
     def _compare_op(self, operator:str, other:Union[float, bool, int, genType])->genVec:
         """Element-wise comparison returning an ``intN`` vector, not a bool one.
@@ -177,7 +325,7 @@ class genVec(genType, ctypes.Structure):
         if not other_is_homo and not is_number(other):
             return NotImplemented
 
-        itype:type = genType.gen_type(self.math_form, ctypes.c_int, self.shape)
+        itype:type = self._int_result_type()
         result:genVec = itype()
 
         operator_func:Callable[[Any, Any], Any] = self._operator_funcs[operator]
@@ -190,7 +338,7 @@ class genVec(genType, ctypes.Structure):
         if not is_number(other):
             return NotImplemented
 
-        itype:type = genType.gen_type(self.math_form, ctypes.c_int, self.shape)
+        itype:type = self._int_result_type()
         result:genVec = itype()
 
         operator_func:Callable[[Any, Any], Any] = self._operator_funcs[operator]
@@ -216,36 +364,64 @@ class genVec(genType, ctypes.Structure):
         return self._compare_rop("!=", cast(Any, other))
 
     def __getattr__(self, name:str)->Union[float,bool,int,genVec]:
+        indices:Optional[List[int]] = self._numeric_indices(name)
+        if indices is not None:
+            vec_type:type = self._vec_result_type(len(indices))
+            return vec_type(*(self[i] for i in indices))
+
         if name not in self.__getter_swizzles():
             raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
 
-        indices:List[int] = [self._attr_index_map[ch] for ch in name]
-        vec_type = self.vec_type(self.dtype, len(name))
+        indices = [self._letter_index(ch) for ch in name]
+        vec_type = self._vec_result_type(len(name))
         return vec_type(*(self[i] for i in indices))
 
-    def __setattr__(self, name:str, value:Union[float,bool,int,genVec]):
+    def __setattr__(self, name:str, value:Union[float,bool,int,genVec])->None:
+        # A component *field* of this class stores through the conversion: a
+        # float into a raw integer slot truncates the way C would. A converting
+        # accessor (half's `x` property) is not a field name and falls through
+        # to the normal attribute path below, which reaches its setter. An
+        # abstract intermediate (genVec2, genQuat) has no fields at all.
+        fields = getattr(type(self), "_fields_", None)
+        if fields:
+            for index, (field_name, _field_type) in enumerate(fields):
+                if field_name == name:
+                    ctypes.Structure.__setattr__(self, name, self._field_value(index, value))
+                    return
+
         if hasattr(self.__class__, name) or in_annotations(name, self.__class__):
             super().__setattr__(name, value)
             return
 
-        if name not in self.__setter_swizzles():
-            if name in self.__getter_swizzles():
+        indices:Optional[List[int]] = self._numeric_indices(name)
+        if indices is not None:
+            if len(set(indices)) != len(indices):
                 raise AttributeError(f"property '{name}' of '{self.__class__.__name__}' object has no setter")
-
+        elif name in self.__setter_swizzles():
+            indices = [self._letter_index(ch) for ch in name]
+        elif name in self.__getter_swizzles():
+            raise AttributeError(f"property '{name}' of '{self.__class__.__name__}' object has no setter")
+        else:
             if name in self.__total_swizzles():
                 raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
 
             super().__setattr__(name, value)
             return
 
-        update_indices:List[int] = []
-        value_is_vec:bool = (isinstance(value, genVec) and len(value) == len(name))
-        if not value_is_vec and not is_number(value):
+        # A swizzle writes one component per named slot. The value may be a
+        # matching vector, a sequence of that length, or a scalar broadcast.
+        value_is_vec:bool = (isinstance(value, genVec) and len(value) == len(indices))
+        value_is_sequence:bool = (
+            not value_is_vec and isinstance(value, (list, tuple))
+            and len(value) == len(indices))
+        if not value_is_vec and not value_is_sequence and not is_number(value):
             raise TypeError(f"can not set '{value.__class__.__name__}' object to property '{name}' of '{self.__class__.__name__}' object")
 
-        for i, ch in enumerate(name):
-            index:int = self._attr_index_map[ch]
-            ctypes.Structure.__setattr__(self, ch, value[i] if value_is_vec else value)
+        update_indices:List[int] = []
+        for i, index in enumerate(indices):
+            component:Any = value[i] if (value_is_vec or value_is_sequence) else value
+            ctypes.Structure.__setattr__(self, self._component_attr(index),
+                                         self._field_value(index, component))
             update_indices.append(index)
         self._update_data(update_indices)
 
@@ -255,15 +431,22 @@ class genVec(genType, ctypes.Structure):
         # structure (`s["v"]["x"]`) then runs unchanged in plain python.
         if isinstance(index, str):
             return getattr(self, index)
-        attr_name:str = 'xyzw'[index]
-        return getattr(self, attr_name)
+        if isinstance(index, slice):
+            # a sliced GLSL spelling reads as that swizzle, as it always has
+            return getattr(self, 'xyzw'[index])
+        # Through the component's own accessor, never a fixed spelling: `x` on
+        # the GLSL-shaped classes, `s0` on the OpenCL-shaped wide ones -- and
+        # always the converting property for a half.
+        return getattr(self, self._component_attr(index))
 
     def __setitem__(self, index:Union[int,slice,str], value:Union[float,int,bool,genVec])->None:
         if isinstance(index, str):
             setattr(self, index, value)
             return
-        attr_name:str = 'xyzw'[index]
-        setattr(self, attr_name, value)
+        if isinstance(index, slice):
+            setattr(self, 'xyzw'[index], value)
+            return
+        setattr(self, self._component_attr(index), self._field_value(index, value))
 
     def __getter_swizzles(self):
         if not self.__class__._all_getter_swizzles:
