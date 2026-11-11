@@ -297,11 +297,20 @@ def step(edge:Union[genType, Number], x:Union[genType, Number])->Union[genType, 
     return _bin_op(edge, x, lambda edge, x: float(x >= edge), "step")
 
 def _smoothstep(edge0: float, edge1: float, x: float) -> float:
-    if x <= edge0:
-        return 0.0
-    if x >= edge1:
-        return 1.0
+    """GLSL smoothstep for one scalar slot: clamp, then the fade polynomial.
+
+    Written as one expression, deliberately without an early return: a device
+    translator walks this body statement by statement, and a branch-free form
+    (`t = clamp(...)`) is the shape it can turn into device code. The value at a
+    well-formed input is the same the early-return form answers -- the clamp is
+    where both forms agree that `x` sits outside `[edge0, edge1]` -- and the only
+    difference is at a NaN, which GLSL leaves undefined anyway.
+    """
     t = (x - edge0) / (edge1 - edge0)
+    if t < 0.0:
+        t = 0.0
+    if t > 1.0:
+        t = 1.0
     return t * t * (3.0 - 2.0 * t)
 
 def _first_container(*args:Any)->Any:
@@ -357,10 +366,26 @@ def _tri_fill(result:genType, a:Any, b:Any, c:Any, op:Callable[[Any,Any,Any], An
 
 def smoothstep(edge0: Union[genType, Number], edge1: Union[genType, Number],
               x: Union[genType, Number])->Union[genType, float]:
-    # All three arguments are element-wise. The previous body bound edge0 as a
-    # float outside the descent, so a vector edge0 either raised or -- once the
-    # closure reached it -- silently produced zeros.
-    return _tri_op(edge0, edge1, x, _smoothstep, "smoothstep")
+    """GLSL smoothstep: clamp ``x`` between the two edges, then fade.
+
+    All three arguments are element-wise (an earlier body bound ``edge0`` as a float
+    outside the descent, so a vector ``edge0`` silently produced zeros). The helper
+    lives *inside* this function rather than beside it: a device translator follows the
+    names a body reads, and a module-private name (``_smoothstep``) is one it refuses --
+    the same shape a closure would be. Inlining it here keeps the host behaviour
+    identical while making the whole computation visible to the walk.
+    """
+    def smoothstep_one(edge0: float, edge1: float, x: float) -> float:
+        # The clamp-and-fade as one assignment per step: a device translation of this
+        # body needs no branch and no name it cannot resolve.
+        t = (x - edge0) / (edge1 - edge0)
+        if t < 0.0:
+            t = 0.0
+        if t > 1.0:
+            t = 1.0
+        return t * t * (3.0 - 2.0 * t)
+
+    return _tri_op(edge0, edge1, x, smoothstep_one, "smoothstep")
 
 def sqrt(x:Union[genType, Number])->Union[genType, float]:
     return _single_op(x, lambda v: cmath.sqrt(v) if _is_scalar_complex(v) else math.sqrt(v), "sqrt")
