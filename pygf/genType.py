@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import builtins
 import ctypes
 from collections.abc import Callable, Iterable
 from enum import Enum
@@ -267,6 +268,18 @@ class genType:
 
     def __iter__(self)->Any:
         raise NotImplementedError(f"{type(self).__name__} does not implement __iter__")
+
+    def __abs__(self)->genType:
+        """Component-wise magnitude: ``abs(v)`` is python's builtin reaching the type.
+
+        One implementation serves every container subclass -- vectors, matrices and
+        quaternions all iterate their slots the same way, which is exactly what
+        ``funcs._single_op`` does for them. Host-only spelling; a kernel's device code
+        never walks it.
+        """
+        from .funcs import _single_op  # funcs imports this module's types
+
+        return _single_op(self, builtins.abs, "abs")
 
     def __str__(self)->str:
         return f"{self.__class__.__name__}({', '.join([str(value) for value in self])})"

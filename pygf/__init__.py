@@ -32,7 +32,6 @@ from .float2 import float2
 from .float3 import float3
 from .float4 import float4
 from .funcs import (
-    abs,
     acos,
     acosh,
     all,
@@ -185,7 +184,7 @@ __all__ = [
     "vector3h", "vector3f", "vector3d",
     "frame4d",
 
-    "abs", "fabs", "sign", "floor", "ceil", "trunc", "round", "roundEven", "fract", "mod", "fmod",
+    "fabs", "sign", "floor", "ceil", "trunc", "round", "roundEven", "fract", "mod", "fmod",
     "min", "max", "clamp", "mix", "step", "smoothstep", "sqrt", "inversesqrt", "cbrt",
     "pow", "exp", "exp2", "exp10", "log", "log2", "log10", "log1p", "expm1", "ldexp", "fma",
     "sin", "cos", "tan", "asin", "acos", "atan",

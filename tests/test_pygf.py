@@ -6,7 +6,7 @@ broken.
 
 Original gf-layer defects (inherited from pyusd/gf):
 
-  * funcs.abs / min / max went through __builtins__, which is a dict inside an
+  * funcs.min / max went through __builtins__, which is a dict inside an
     imported module, so all three raised AttributeError.
   * funcs.outerProduct called genMat.gen_type, which genMat does not define; it
     inherits genType.gen_type and needs a math_form argument.
@@ -215,7 +215,7 @@ def row0(matrix):
 
 # --- builtins reached through the module, not through __builtins__ ------------
 print("--- scalar builtins ---")
-check("abs of a negative scalar", funcs.abs(-2.5), 2.5)
+check("abs of a negative scalar", abs(-2.5), 2.5)
 check("length of a negative scalar", funcs.length(-2.5), 2.5)
 check("normalize of a scalar", funcs.normalize(2.0), 1.0)
 check("min of two vectors", components(funcs.min(V3(3, 4, 0), V3(1, 1, 1))), (1.0, 1.0, 0.0))
@@ -390,9 +390,9 @@ check("quat * vec rotates", str(quatd(0.0, 1.0, 0.0, 0.0) * double3(2.0, 3.0, 4.
 print()
 print("--- element-wise funcs on matrices ---")
 three = matrix3d(3.0)
-check("abs of a 4x4", row0(funcs.abs(matrix4d())), [1.0, 0.0, 0.0, 0.0])
+check("abs of a 4x4", row0(abs(matrix4d())), [1.0, 0.0, 0.0, 0.0])
 # A matrix takes exactly rows*cols scalars, so this spells out all nine.
-check("abs of a matrix of -3", as_rows(funcs.abs(matrix3d(0.0, -3.0, 0.0,
+check("abs of a matrix of -3", as_rows(abs(matrix3d(0.0, -3.0, 0.0,
                                                          0.0, -6.0, 0.0,
                                                          0.0, 0.0, -9.0))),
       [[0.0, 3.0, 0.0], [0.0, 6.0, 0.0], [0.0, 0.0, 9.0]])
@@ -879,7 +879,7 @@ check_close("acosh(1+2j)", funcs.acosh(1 + 2j), np.arccosh(1 + 2j))
 check_close("atanh(1+2j)", funcs.atanh(1 + 2j), np.arctanh(1 + 2j))
 check("pow(1+2j, 2)", funcs.pow(1 + 2j, 2), np.power(1 + 2j, 2))
 check("exp2(1+2j)", funcs.exp2(1 + 2j), np.exp2(1 + 2j))
-check("abs(1+2j)", funcs.abs(1 + 2j), np.abs(1 + 2j))
+check("abs(1+2j)", abs(1 + 2j), np.abs(1 + 2j))
 check("conjugate(1+2j)", funcs.conjugate(1 + 2j), np.conjugate(1 + 2j))
 
 # The nine the batch left: numpy defines each of them for a complex value, so pygf

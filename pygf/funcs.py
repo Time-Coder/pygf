@@ -134,9 +134,6 @@ def _single_op(x:Any, op:Callable[[Any], Any], op_name:str)->Any:
     else:
         raise TypeError(f"{op_name} not supported for type {x.__class__.__name__}")
 
-def abs(x:Union[genType, Number])->Union[genType, float]:
-    return _single_op(x, builtins.abs, "abs")
-
 def sign(x:Union[genType, Number])->Union[genType, float]:
     # GLSL: sign(x) is -1, 0 or 1. math.copysign gave 1 at +0.0 and -1 at -0.0,
     # where GLSL returns 0 for both.
