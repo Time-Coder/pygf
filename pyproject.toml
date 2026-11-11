@@ -69,6 +69,13 @@ publish = [
 Homepage = "https://github.com/Time-Coder/pygf"
 Source = "https://github.com/Time-Coder/pygf"
 
+[tool.setuptools]
+# Editable installs get the "compat" form: a plain-path .pth that static resolvers
+# (ty, pyright/pylance) can read. The default "strict" form is an executable .pth that
+# installs a MetaPathFinder -- the runtime imports fine, but every static tool in every
+# dependent package (PyGPGPU's check gate, the IDE's import completions) sees nothing.
+editable_mode = "compat"
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["pygf*"]
