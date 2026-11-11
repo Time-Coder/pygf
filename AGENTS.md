@@ -222,6 +222,22 @@ not always catch.
   `VectorArray` view and its elements came back as `float2`, so `arr[i]["y"]` raised
   `TypeError: string indices must be integers`. Never "optimize" this back into a plain
   `_VECTOR_TYPES.get(dtype)`; PyGPGPU applies the mirror rule on its side.
+- **A swizzle write stores through the component's own accessor, never the GLSL
+  spelling.** `ctypes.Structure.__setattr__(self, "r", value)` on an x/y-named class is not
+  a field write: ctypes silently stores a *python* attribute, the fields keep their old
+  values, and the instance is shadowed from then on (`v.rg = 7` was a silent no-op for
+  exactly that reason). `genVec._component_attr` resolves the name that has the accessor --
+  `x` on the GLSL-shaped classes and a half, `s0` on the OpenCL-shaped wide ones -- and the
+  write goes through it. A raw integer field additionally converts a float the way C does
+  (truncation toward zero, `_field_value`); a converting property (half) is skipped.
+- **`is_number` matches numpy scalar names against `value.__class__.__name__`**, and a
+  container class can share one (PyGPGPU's `int8`/`float16` vectors against numpy's scalars
+  of the same spelling). The check therefore excludes anything carrying a `math_form` --
+  removing that guard makes a whole vector broadcast into one component of another vector.
+- **The dtype name table is built with `setdefault` over an ordered list, not a dict
+  literal**, because the ctypes classes alias per platform: `c_int is c_long` on Windows, so
+  a literal's later `'long'` entry would answer for plain `int` vectors and every comparison
+  would ask for a nonexistent `long2`.
 - **The swizzle block is generated, and the generator is the only writer.**
   `tools/sync_swizzle_blocks.py` rewrites the whole fenced region every run, so
   hand-editing inside the markers is lost. Four things about it are load-bearing:
