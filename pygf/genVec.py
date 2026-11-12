@@ -72,10 +72,11 @@ class genVec(genType, ctypes.Structure):
     # OpenCL spells a vector's components ``s0``-style, and a 16-wide vector
     # names the slots above nine in hex, either case. The names are attribute
     # names, so every numeric swizzle carries the ``s`` prefix; the index of a
-    # character is its hex value. A subclass that wants the family turns this
-    # on (PyGPGPU's vectors do, so ``char2().s01`` and ``float16().sA`` read
-    # there); pygf's own GLSL-shaped surface keeps it off.
-    _numeric_swizzles:bool = False
+    # character is its hex value. On by default: the numeric spelling is part
+    # of the host surface, so ``float2().s01`` and ``float16().sA`` read here
+    # like every other swizzle. A subclass that wants a GLSL-only surface
+    # (no ``s0``-style names) turns this off.
+    _numeric_swizzles:bool = True
     _NUMERIC_LENGTHS:Tuple[int, ...] = (1, 2, 3, 4, 8, 16)
 
     _all_getter_swizzles:Set[str] = set()
