@@ -29,13 +29,22 @@ python tools/sync_swizzle_blocks.py
 `python ../pygf/static_check.py` and `python ../pygf/tests/test_pygf.py` are how
 PyUSD reaches these checks; see `../PyUSD/AGENTS.md` for what it relies on.
 
-An editable install must ask pip for the compat form: `pip install -e . --config-settings
-editable_mode=compat`. Setuptools' default is the "strict" editable -- an *executable* .pth
-that installs a MetaPathFinder -- which the runtime imports fine but which no static tool can
-resolve: ty reports every `pygf` import unresolved and the IDE's import completions see
-nothing. The compat form writes a plain-path .pth, which ty, pyright and every other static
-resolver read. It cannot be pinned in pyproject.toml (`tool.setuptools must not contain
-{'editable_mode'}`); the flag is per-install.
+A dependent package (PyGPGPU) picks up local pygf changes by installing the built wheel, not
+by an editable install: `python -m build --wheel`, then
+`pip install --force-reinstall --no-deps dist/pygf-<version>-py3-none-any.whl`. A wheel is
+plain files in site-packages, so ty, pyright/pylance and every other static resolver see the
+types natively -- and the dependent's tests run against the packaged artifact, which is what
+its users get. Local iteration needs no version bump (`--force-reinstall` overwrites the same
+filename); only an upload does. An editable install is the alternative when live-edit
+reflection matters more than the packaged view, and it must then ask pip for the compat form:
+`pip install -e . --config-settings editable_mode=compat`. Setuptools' default is the
+"strict" editable -- an *executable* .pth that installs a MetaPathFinder -- which the runtime
+imports fine but which no static tool can resolve: ty reports every `pygf` import unresolved
+and the IDE's import completions see nothing. The compat form writes a plain-path .pth, which
+static resolvers read. Neither form can be pinned in pyproject.toml (`tool.setuptools must
+not contain {'editable_mode'}`); the flag is per-install. pygf's own suite always tests the
+working tree -- `import pygf` from this repository resolves to this directory ahead of any
+installed copy -- so the two routes only differ for the packages that consume pygf.
 
 ## Conventions
 
